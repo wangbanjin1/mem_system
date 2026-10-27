@@ -1,0 +1,61 @@
+types:
+  - memory_type: agent_experience
+    subtype: case
+    owner_type: agent
+    memory_key_fields:
+      - intent_category
+      - initial_state_signature
+      - solution_signature
+    required_fields:
+      - intent_category
+      - initial_state_signature
+      - solution_signature
+    optional_fields:
+      - action_sequence
+      - state_transitions
+      - outcome
+      - reason
+      - reusable_condition
+      - note
+    vote_threshold: 1
+    decay_lambda: 0.03
+    description_template: "案例经验 [{intent_category}]：{initial_state_signature} -> {solution_signature}"
+
+  - memory_type: agent_experience
+    subtype: trajectory
+    owner_type: agent
+    memory_key_fields:
+      - intent_category
+      - state_pattern
+    required_fields:
+      - intent_category
+      - state_pattern
+    optional_fields:
+      - action_sequence
+      - key_transitions
+      - branches
+      - boundary
+      - note
+    vote_threshold: 2
+    decay_lambda: 0.02
+    description_template: "动作模式轨迹 [{intent_category}]：{state_pattern}"
+
+  - memory_type: agent_experience
+    subtype: policy
+    owner_type: agent
+    memory_key_fields:
+      - intent_category
+      - applicable_state_signature
+    required_fields:
+      - intent_category
+      - applicable_state_signature
+    optional_fields:
+      - recommended_action
+      - forbidden_action
+      - expected_effect
+      - source_cases
+      - counter_examples
+      - note
+    vote_threshold: 2
+    decay_lambda: 0.01
+    description_template: "稳定策略 [{intent_category}]：当 {applicable_state_signature} 时执行推荐动作"

@@ -1,0 +1,29 @@
+{
+  "businesses": {
+    "openlive": ["开直播", "openlive", "open_live", "开播", "推流", "户外直播", "带货直播", "游戏直播", "直播推流", "现场开播"],
+    "live": ["看直播", "live", "watch_live", "观看直播", "直播"],
+    "video": ["短视频", "视频", "刷视频", "看短视频", "刷短剧", "video", "short_video", "长视频", "看视频"],
+    "game": ["游戏", "云游戏", "打游戏", "玩游戏", "对战", "排位", "开黑", "团战", "竞技", "game"],
+    "meeting": ["视频会议", "语音会议", "线上会议", "会议", "开会", "入会", "meeting", "投屏会议"],
+    "video_call": ["视频通话", "语音通话", "通话", "打视频", "视频连麦", "video_call", "连麦"]
+  },
+  "resolutions": [
+    "360p", "480p", "540p", "720p", "1080p", "2160p", "2k", "4k",
+    "360P", "480P", "540P", "720P", "1080P", "2160P", "2K", "4K",
+    "流畅", "标清", "高清", "超清", "蓝光", "原画"
+  ],
+  "priorities": [
+    "stability", "quality", "latency", "fluency", "bandwidth",
+    "稳定优先", "画质优先", "低时延优先", "时延优先", "流畅优先", "省流优先"
+  ],
+  "scenes": [
+    "outdoor_live", "indoor_live", "commute", "high_speed_rail", "subway",
+    "campus", "dormitory", "office", "stadium", "scenic_spot", "game", "weak_network",
+    "transit_bus", "rest_stop_hotel", "community_visit",
+    "户外", "户外直播", "室内", "通勤", "高铁", "地铁", "校园", "宿舍", "办公室", "景区", "弱网", "大巴转场", "驻地酒店"
+  ],
+  "environments": [
+    "weak_coverage", "high_congestion", "moving", "unstable_uplink", "roaming",
+    "弱覆盖", "弱网", "高拥塞", "移动中", "上行不稳定", "漫游"
+  ]
+}

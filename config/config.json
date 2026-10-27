@@ -1,0 +1,59 @@
+{
+  "data_root": "data_root",
+  "embedding": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key": "sk-5201f73df9c54f6894cb26d64d6eddba",
+    "model": "text-embedding-v4",
+    "dimension": 1024,
+    "timeout_connect": 10.0,
+    "timeout_read": 120.0,
+    "max_retries": 3
+  },
+  "llm": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key": "sk-5201f73df9c54f6894cb26d64d6eddba",
+    "model": "qwen3.8-flash",
+    "temperature": 0.0,
+    "max_tokens": 2048,
+    "enable_thinking": false,
+    "timeout_connect": 10.0,
+    "timeout_read": 120.0,
+    "max_retries": 3
+  },
+  "llm_router": {
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key": "sk-5201f73df9c54f6894cb26d64d6eddba",
+    "model": "qwen3.8-flash",
+    "temperature": 0.0,
+    "max_tokens": 256,
+    "enable_thinking": false,
+    "timeout_connect": 10.0,
+    "timeout_read": 60.0,
+    "max_retries": 2
+  },
+  "retrieval": {
+    "alpha": 0.5,
+    "beta": 0.2,
+    "gamma": 0.1,
+    "delta": 0.2,
+    "temporary_weight": 0.5,
+    "top_k": 10,
+    "heat_bump_on_hit": 0.05
+  },
+  "maintenance": {
+    "heat_half_life_hours": 168.0,
+    "candidate_timeout_days": 90,
+    "eviction_max_active": 500,
+    "eviction_score_threshold": 0.15,
+    "timeline_compress_days": 60,
+    "event_ttl_days": 90
+  },
+  "pruning": {
+    "enabled": false
+  },
+  "queue": {
+    "async_mode": false,
+    "max_retries": 3,
+    "poll_interval_sec": 0.5
+  }
+}

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory_system"
+version = "0.2.0"
+description = "File-backed + SQLite secondary index Agent Memory System with 3-tier cognitive memory"
+readme = "docs/Memory System 复刻指南.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.24.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

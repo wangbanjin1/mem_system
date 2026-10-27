@@ -1,0 +1,208 @@
+types:
+  - memory_type: preference
+    subtype: application_business
+    owner_type: user
+    memory_key_fields:
+      - application
+      - business
+    required_fields:
+      - application
+      - business
+    optional_fields:
+      - resolution
+      - priority
+      - latency
+      - bitrate
+      - scene
+      - time_window
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.02
+    description_template: "用户使用 {application} 进行 {business} 时的偏好配置"
+
+  - memory_type: preference
+    subtype: preferred_value
+    owner_type: user
+    memory_key_fields:
+      - application
+      - business
+    required_fields:
+      - application
+      - business
+    optional_fields:
+      - resolution
+      - priority
+      - latency
+      - parameter
+      - value
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.01
+    description_template: "用户在 {application} ({business}) 下的默认首选参数"
+
+  - memory_type: preference
+    subtype: periodic_preference
+    owner_type: user
+    memory_key_fields:
+      - condition
+      - value
+    required_fields:
+      - condition
+      - value
+    optional_fields:
+      - application
+      - business
+      - resolution
+      - priority
+      - latency
+      - time_window
+      - note
+      - validity
+    vote_threshold: 2
+    decay_lambda: 0.02
+    description_template: "周期/条件偏好：{condition} -> {value}"
+
+  - memory_type: preference
+    subtype: expression
+    owner_type: user
+    memory_key_fields:
+      - alias
+    required_fields:
+      - alias
+      - target
+    optional_fields:
+      - source_expression
+      - application
+      - business
+      - scene
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.0
+    description_template: "个性化表达映射：「{alias}」表示 {target}"
+
+  - memory_type: preference
+    subtype: service_to_app
+    owner_type: user
+    memory_key_fields:
+      - business
+    required_fields:
+      - business
+      - application
+    optional_fields:
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.01
+    description_template: "业务默认应用：{business} 默认使用 {application}"
+
+  - memory_type: preference
+    subtype: experience_parameter
+    owner_type: user
+    memory_key_fields:
+      - application
+      - business
+      - scene
+    required_fields:
+      - application
+      - business
+      - scene
+    optional_fields:
+      - resolution
+      - priority
+      - latency
+      - time_window
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.02
+    description_template: "用户在 {scene} 场景下使用 {application} ({business}) 的体验参数偏好"
+
+  - memory_type: preference
+    subtype: time_pattern
+    owner_type: user
+    memory_key_fields:
+      - application
+      - business
+      - period_type
+    required_fields:
+      - application
+      - business
+      - period_type
+    optional_fields:
+      - time_window
+      - resolution
+      - priority
+      - note
+      - validity
+    vote_threshold: 2
+    decay_lambda: 0.05
+    description_template: "时间模式偏好：{period_type} 使用 {application} ({business})"
+
+  - memory_type: preference
+    subtype: environment
+    owner_type: user
+    memory_key_fields:
+      - environment
+      - application
+      - business
+    required_fields:
+      - environment
+      - application
+      - business
+    optional_fields:
+      - mobility
+      - coverage
+      - congestion
+      - uplink_condition
+      - device
+      - resolution
+      - priority
+      - preference
+      - note
+      - validity
+    vote_threshold: 2
+    decay_lambda: 0.05
+    description_template: "环境偏好：在 {environment} 环境下使用 {application} ({business}) 的策略"
+
+  - memory_type: preference
+    subtype: scene_preference
+    owner_type: user
+    memory_key_fields:
+      - scene
+      - application
+      - business
+    required_fields:
+      - scene
+      - application
+      - business
+    optional_fields:
+      - resolution
+      - priority
+      - latency
+      - time_window
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.02
+    description_template: "场景偏好：{scene} 下使用 {application} ({business})"
+
+  - memory_type: preference
+    subtype: constraint
+    owner_type: user
+    memory_key_fields:
+      - application
+      - constraint_type
+    required_fields:
+      - application
+      - constraint_type
+    optional_fields:
+      - business
+      - value
+      - note
+      - validity
+    vote_threshold: 1
+    decay_lambda: 0.01
+    description_template: "约束条件：{application} 的 {constraint_type} 约束"

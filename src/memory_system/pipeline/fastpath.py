@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from ..core.models import Event, EventType
+from .extractor import Extractor, extract_time_window_from_text
+
+
+# Parameter signal regex (§4 Pitfall 3): if matched, MUST NOT skip LLM!
+_PARAM_SIGNAL_RE = re.compile(
+    r"(?:360p|480p|540p|720p|1080p|2160p|2k|4k|\d+\s*ms|\d+\s*毫秒|画质|分辨率|清晰度|时延|延迟|老规矩|照旧|码率|帧率|稳定优先|画质优先|低时延|流畅优先|弱网|\d{1,2}[:：点时]\d{0,2})",
+    re.IGNORECASE,
+)
+
+# Concession patterns (§4 Pitfall 3): "行，那就按X办吧" -> forces LLM and marks concession
+_CONCESSION_RE = re.compile(
+    r"(?:行[，,\s]*那就按|好吧[，,\s]*那就|那先按.+办|那就按你说的|那就这样吧|行吧[，,\s]*按)",
+    re.IGNORECASE,
+)
+
+# Pure greeting / noise patterns
+_NOISE_EXACT_RE = re.compile(
+    r"^(?:[\s，,。！!？?、]*(?:你好|您好|谢谢|多谢|感谢|好的|收到|好勒|明白|知道了|ok|okay|嗯|嗯嗯|再见|拜拜|没事了|不用了))+[\s，,。！!？?、]*$",
+    re.IGNORECASE,
+)
+
+# Alias rules covering general and cross_memory_data expression_vault templates
+_ALIAS_RULE_PATTERNS = [
+    re.compile(
+        r"(?:以后|默认|平时)?(?:我)?(?:一)?(?:说|提到|提)[“\"‘'「『]([^”\"’'」』，,。]{2,16})[”\"’'」』](?:时)?[，,\s]*(?:画质|时延(?:上限)?|时长|时间)?(?:通常)?(?:就是|代表|指的就是|指的是|说的就是|意思是|等于|就按|按)([^。！!，,\n]{2,32})"
+    ),
+    re.compile(
+        r"(?:我)?(?:平时|通常|以后)?把(?:这个应用|它)?叫[“\"‘'「『]?([^”\"’'」』，,。]{2,16})[”\"’'」』]?[，,\s]*(?:指的就是|指的是|就是|代表)([^。！!，,\n]{2,32})"
+    ),
+    re.compile(
+        r"(?:以后|默认|平时)?(?:我)?(?:一)?说[“\"‘'「『]?([^”\"’'」』，,。]{2,16})[”\"’'」』]?[，,\s]*(?:就是|代表|指的就是|指的是|意思是|等于)([^。！!，,\n]{2,32})"
+    ),
+]
+
+# Multi-turn disambiguation: agent asks "您说的‘X’具体指..." and user confirms "对，就是画质档位720p..."
+_AGENT_DISAMBIG_RE = re.compile(
+    r"您说的[“\"‘'「『]([^”\"’'」』]{2,16})[”\"’'」』]具体(?:是)?指"
+)
+_USER_DISAMBIG_CONFIRM_RE = re.compile(
+    r"(?:对|是的|没错|就是).*?(360p|480p|540p|720p|1080p|2160p|2k|4k|\d+\s*ms|\d+\s*毫秒|\d+\s*min|\d+\s*分钟)",
+    re.IGNORECASE,
+)
+
+# Correction rule: 不是X，是Y
+_CORRECTION_RE = re.compile(
+    r"不是\s*([^，,。！!\s]{1,20})\s*[，,\s]*(?:而是|是)\s*([^，,。！!\n]{1,20})"
+)
+
+# Clear rule: 取消/清除/删掉 ... 偏好/默认配置
+_CLEAR_RE = re.compile(
+    r"(?:取消|清除|删除|忘掉|作废).*(?:偏好|默认|老规矩|设置|配置)"
+)
+
+
+def _clean_alias_target(raw_target: str) -> str:
+    t = raw_target.strip().rstrip("。！!，,")
+    for prefix in ("时延控制在", "画质档位", "画质就是", "时延上限就按", "时长按", "时间就按"):
+        if t.startswith(prefix):
+            t = t[len(prefix) :].strip()
+    for suffix in ("以内", "来", "算", "处理", "理解"):
+        if t.endswith(suffix) and len(t) > len(suffix) + 1:
+            t = t[: -len(suffix)].strip()
+    return t
+
+
+@dataclass
+class FastPathResult:
+    confirmed: List[Event] = field(default_factory=list)
+    needs_llm: bool = True
+    has_param_signal: bool = False
+    has_concession: bool = False
+    is_noise: bool = False
+
+
+class FastPathProcessor:
+    """Rule-based zero-LLM fast path for alias mapping, slot matching, corrections, and noise filtering."""
+
+    def __init__(self, data_dir: Optional[str | Path] = None) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        self.data_dir = Path(data_dir) if data_dir else (repo_root / "data")
+        self.app_map: Dict[str, List[str]] = self._load_json(self.data_dir / "app_map.json", {})
+        self.app_config: Dict[str, Any] = self._load_json(self.data_dir / "app_config.json", {})
+        self.support_matrix: Dict[str, List[str]] = self._load_json(self.data_dir / "support_matrix.json", {})
+
+        self._alias_to_app: List[Tuple[str, str]] = []
+        for canonical, aliases in self.app_map.items():
+            for a in set([canonical, *aliases]):
+                self._alias_to_app.append((a, canonical))
+        self._alias_to_app.sort(key=lambda x: len(x[0]), reverse=True)
+
+        self._alias_to_biz: List[Tuple[str, str]] = []
+        for canonical_biz, aliases in (self.app_config.get("businesses") or {}).items():
+            for a in set([canonical_biz, *aliases]):
+                self._alias_to_biz.append((a, canonical_biz))
+        self._alias_to_biz.sort(key=lambda x: len(x[0]), reverse=True)
+
+    @staticmethod
+    def _load_json(path: Path, default: Any) -> Any:
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                return default
+        return default
+
+    def _detect_app_and_biz(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        low = text.lower()
+        found_app: Optional[str] = None
+        for alias, canonical in self._alias_to_app:
+            if alias.lower() in low:
+                found_app = canonical
+                break
+        found_biz: Optional[str] = None
+        for alias, canonical_biz in self._alias_to_biz:
+            if alias.lower() in low:
+                found_biz = canonical_biz
+                break
+        return found_app, found_biz
+
+    @staticmethod
+    def _detect_validity(text: str) -> str:
+        if any(w in text for w in ("临时", "暂时", "今天先", "这次先", "就今天", "就这次")):
+            return "temporary"
+        return "long_term"
+
+    @staticmethod
+    def _match_alias_in_text(text: str) -> Optional[Tuple[str, str]]:
+        for pat in _ALIAS_RULE_PATTERNS:
+            m = pat.search(text)
+            if m:
+                alias_str = m.group(1).strip(" '‘’\"“”「『」』")
+                target_str = _clean_alias_target(m.group(2))
+                if alias_str and target_str:
+                    return alias_str, target_str
+        return None
+
+    def process(
+        self,
+        session_turns: List[Dict[str, Any]],
+        session_id: str = "",
+        user_id: str = "",
+        tenant_id: str = "default",
+    ) -> FastPathResult:
+        res = FastPathResult()
+        if not session_turns:
+            res.is_noise = True
+            res.needs_llm = False
+            return res
+
+        numbered_turns = Extractor._ensure_turn_numbers(session_turns)
+
+        user_turns: List[Tuple[int, str]] = []
+        for idx, t in enumerate(numbered_turns, start=1):
+            turn_no = int(t.get("turn", idx))
+            role = str(t.get("role", "user")).lower()
+            txt = str(t.get("content") or t.get("text") or "").strip()
+            if role == "user" and txt:
+                user_turns.append((turn_no, txt))
+
+        if not user_turns:
+            res.is_noise = True
+            res.needs_llm = False
+            return res
+
+        # Check if all user turns are pure noise/chitchat
+        if all(_NOISE_EXACT_RE.match(txt) for _, txt in user_turns):
+            res.is_noise = True
+            res.needs_llm = False
+            return res
+
+        full_user_text = " ".join(txt for _, txt in user_turns)
+        if _PARAM_SIGNAL_RE.search(full_user_text):
+            res.has_param_signal = True
+        if _CONCESSION_RE.search(full_user_text):
+            res.has_concession = True
+
+        seen_aliases: Set[str] = set()
+
+        # Check multi-turn disambiguation aliases (Agent asks "您说的‘X’具体指..." -> User confirms "720p")
+        pending_disambig_alias: Optional[str] = None
+        for t in numbered_turns:
+            role = str(t.get("role", "user")).lower()
+            txt = str(t.get("content") or t.get("text") or "").strip()
+            turn_no = int(t.get("turn", 1))
+            if role != "user":
+                m_ag = _AGENT_DISAMBIG_RE.search(txt)
+                if m_ag:
+                    pending_disambig_alias = m_ag.group(1).strip(" '‘’\"“”")
+            elif pending_disambig_alias:
+                m_cf = _USER_DISAMBIG_CONFIRM_RE.search(txt)
+                if m_cf and pending_disambig_alias not in seen_aliases:
+                    target_val = m_cf.group(1).strip().lower().replace("毫秒", "ms").replace("分钟", "min")
+                    seen_aliases.add(pending_disambig_alias)
+                    res.confirmed.append(
+                        Event(
+                            event_type=EventType.EXPRESSION_ALIAS.value,
+                            subtype="expression",
+                            memory_key_fields={"alias": pending_disambig_alias},
+                            content={
+                                "alias": pending_disambig_alias,
+                                "source_expression": pending_disambig_alias,
+                                "target": target_val,
+                                "validity": "long_term",
+                                "note": f"用户确认「{pending_disambig_alias}」表示「{target_val}」",
+                            },
+                            validity="long_term",
+                            confidence=0.95,
+                            source_session_id=session_id,
+                            evidence_turns=[turn_no],
+                            user_id=user_id,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                pending_disambig_alias = None
+
+        for turn_no, txt in user_turns:
+            validity = self._detect_validity(txt)
+            is_conc = bool(_CONCESSION_RE.search(txt))
+
+            # 1. Expression Alias rule
+            m_alias = self._match_alias_in_text(txt)
+            if m_alias:
+                alias_str, target_str = m_alias
+                if alias_str not in seen_aliases:
+                    seen_aliases.add(alias_str)
+                    app, biz = self._detect_app_and_biz(target_str)
+                    content: Dict[str, Any] = {
+                        "alias": alias_str,
+                        "source_expression": alias_str,
+                        "target": target_str,
+                        "validity": "long_term",
+                        "note": f"用户定义「{alias_str}」表示「{target_str}」",
+                    }
+                    if app:
+                        content["application"] = app
+                    if biz:
+                        content["business"] = biz
+                    res.confirmed.append(
+                        Event(
+                            event_type=EventType.EXPRESSION_ALIAS.value,
+                            subtype="expression",
+                            memory_key_fields={"alias": alias_str},
+                            content=content,
+                            validity="long_term",
+                            confidence=0.95,
+                            source_session_id=session_id,
+                            evidence_turns=[turn_no],
+                            is_concession=is_conc,
+                            user_id=user_id,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                    continue
+
+            # 2. Clear rule
+            if _CLEAR_RE.search(txt):
+                app, biz = self._detect_app_and_biz(txt)
+                if app and biz:
+                    res.confirmed.append(
+                        Event(
+                            event_type=EventType.PREFERENCE_CLEAR.value,
+                            subtype="application_business",
+                            memory_key_fields={"application": app, "business": biz},
+                            content={"application": app, "business": biz, "note": txt},
+                            validity="long_term",
+                            confidence=0.95,
+                            source_session_id=session_id,
+                            evidence_turns=[turn_no],
+                            user_id=user_id,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                    continue
+
+            # 3. Correction rule ("不是X，是Y")
+            m_corr = _CORRECTION_RE.search(txt)
+            if m_corr:
+                wrong_part, right_part = m_corr.group(1).strip(), m_corr.group(2).strip()
+                app, biz = self._detect_app_and_biz(right_part)
+                if not app or not biz:
+                    app2, biz2 = self._detect_app_and_biz(txt)
+                    app = app or app2
+                    biz = biz or biz2
+                if app and biz and self._is_supported(app, biz):
+                    content = {
+                        "application": app,
+                        "business": biz,
+                        "corrected_from": wrong_part,
+                        "corrected_to": right_part,
+                        "validity": validity,
+                        "note": txt,
+                    }
+                    self._extract_inline_params(txt, content)
+                    res.confirmed.append(
+                        Event(
+                            event_type=EventType.PREFERENCE_CORRECT.value,
+                            subtype="application_business",
+                            memory_key_fields={"application": app, "business": biz},
+                            content=content,
+                            validity=validity,
+                            confidence=0.92,
+                            source_session_id=session_id,
+                            evidence_turns=[turn_no],
+                            is_concession=is_conc,
+                            user_id=user_id,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                    continue
+
+            # 4. Explicit app + business statement
+            app, biz = self._detect_app_and_biz(txt)
+            if app and biz and self._is_supported(app, biz):
+                content = {
+                    "application": app,
+                    "business": biz,
+                    "validity": validity,
+                    "note": txt,
+                }
+                self._extract_inline_params(txt, content)
+                res.confirmed.append(
+                    Event(
+                        event_type=EventType.PREFERENCE_SET.value,
+                        subtype="application_business",
+                        memory_key_fields={"application": app, "business": biz},
+                        content=content,
+                        validity=validity,
+                        confidence=0.9,
+                        source_session_id=session_id,
+                        evidence_turns=[turn_no],
+                        is_concession=is_conc,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                    )
+                )
+
+        # Decide whether LLM is still needed (§1.2 & §4 Pitfall 3):
+        # If confirmed events exist AND no param signal AND no concession, we can skip LLM!
+        # Otherwise, if there are parameter signals, concessions, or nothing confirmed yet, run LLM.
+        if res.confirmed and not res.has_param_signal and not res.has_concession:
+            res.needs_llm = False
+        else:
+            res.needs_llm = True
+
+        return res
+
+    def _is_supported(self, app: str, biz: str) -> bool:
+        if not self.support_matrix:
+            return True
+        allowed = [b.lower() for b in self.support_matrix.get(app, [])]
+        return biz.lower() in allowed
+
+    @staticmethod
+    def _extract_inline_params(text: str, content: Dict[str, Any]) -> None:
+        m_res = re.search(r"\b(360p|480p|540p|720p|1080p|2160p|2k|4k)\b", text, re.IGNORECASE)
+        if m_res:
+            content["resolution"] = m_res.group(1).lower()
+        m_lat = re.search(r"(\d+)\s*(?:ms|毫秒)", text, re.IGNORECASE)
+        if m_lat:
+            content["latency"] = f"{m_lat.group(1)}ms"
+        if "稳定优先" in text:
+            content["priority"] = "stability"
+        elif "画质优先" in text:
+            content["priority"] = "quality"
+        elif "低时延" in text or "时延优先" in text:
+            content["priority"] = "latency"
+        elif "流畅优先" in text:
+            content["priority"] = "fluency"
+        tw = extract_time_window_from_text(text)
+        if tw:
+            content["time_window"] = tw
