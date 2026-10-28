@@ -8,3 +8,5 @@ data_root/
 data_roots_8902_v7/
 data_storage_cross_sample_test/
 test/e2e_3users_data_root/
+test/e2e_cognitive_samples_data_root/
+test/tmp_recheck_root/
