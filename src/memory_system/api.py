@@ -406,9 +406,14 @@ class MemorySystem:
         node_ids_out: List[str] = []
         is_non_pref = False
 
-        # Append completed session working_record if passed in metadata
+        # Append completed session working_record if passed in metadata (skipping single-time temporary overrides)
         wr_to_append = meta.get("working_record_to_append")
-        if isinstance(wr_to_append, dict) and wr_to_append.get("record_id"):
+        if (
+            isinstance(wr_to_append, dict)
+            and wr_to_append.get("record_id")
+            and not wr_to_append.get("is_temporary_override")
+            and wr_to_append.get("validity") != "temporary"
+        ):
             rec_copy = dict(wr_to_append)
             rec_copy.setdefault("event_time", session_ts)
             self.ingest_working_records(ns.tenant_id, ns.user_id, [rec_copy])
@@ -1120,12 +1125,13 @@ class MemorySystem:
                 else EventType.WORKING_RECORD.value
             )
             ev_ts = normalize_ts_str(str(rec.get("event_time") or rec.get("created_at") or ""))
+            ev_validity = str(rec.get("validity") or "long_term")
             ev = Event(
                 event_type=ev_type,
                 subtype="working_record",
                 memory_key_fields={"record_id": rec_id},
                 content=content,
-                validity="long_term",
+                validity=ev_validity,
                 confidence=float(rec.get("confidence", 0.95)),
                 user_id=user_id,
                 tenant_id=tenant_id,

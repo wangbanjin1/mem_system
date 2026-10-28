@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -110,6 +111,39 @@ _PARAPHRASE_SYNONYMS: List[Tuple[str, str]] = [
     ("外勤酒店", "外勤驻地"),
 ]
 _CJK_CHARS_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _parse_relative_date_window(query: str, now_ts: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Compute [start_ymd, end_ymd] window from colloquial temporal expressions ('昨天', '上周', '上个月初', '之前的意图保障单')."""
+    if not query or not now_ts:
+        return None
+    s_ts = str(now_ts)
+    ref_d: Optional[date] = None
+    m_cn = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", s_ts)
+    if m_cn:
+        try:
+            ref_d = date(int(m_cn.group(1)), int(m_cn.group(2)), int(m_cn.group(3)))
+        except ValueError:
+            ref_d = None
+    else:
+        m_iso = re.search(r"(\d{4})-(\d{2})-(\d{2})", s_ts)
+        if m_iso:
+            try:
+                ref_d = date(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
+            except ValueError:
+                ref_d = None
+    if ref_d is None:
+        return None
+
+    if "上个月" in query or "上月" in query:
+        return ((ref_d - timedelta(days=50)).isoformat(), (ref_d - timedelta(days=10)).isoformat())
+    if "上周" in query or "上一周" in query:
+        return ((ref_d - timedelta(days=25)).isoformat(), (ref_d - timedelta(days=2)).isoformat())
+    if "昨天预约" in query or "前天" in query or "昨天" in query:
+        return ((ref_d - timedelta(days=45)).isoformat(), ref_d.isoformat())
+    if "意图保障单" in query and ("之前" in query or "上次" in query):
+        return ((ref_d - timedelta(days=60)).isoformat(), ref_d.isoformat())
+    return None
 
 
 def _normalize_paraphrase_text(text: str) -> str:
@@ -629,6 +663,7 @@ class SearchEngine:
 
         apps = self._expand_apps(apps)
         negated_apps = self._expand_apps(negated_apps)
+        rel_date_range = _parse_relative_date_window(combined_pos_text, now_ts)
 
         # Remove any positive slots that were only in negated lists if not explicitly requested in positive clauses
         return {
@@ -637,6 +672,7 @@ class SearchEngine:
             "businesses": bizs,
             "scenes": scenes,
             "time_windows": time_windows,
+            "relative_date_range": rel_date_range,
             "explicit_applications": explicit_apps,
             "explicit_businesses": explicit_bizs,
             "negated_applications": [a for a in negated_apps if a not in apps],
@@ -745,7 +781,7 @@ class SearchEngine:
                     scenes.append(bound_scene)
                     changed = True
 
-            elif st in ("scene_preference", "environment") and v_sim >= 0.42:
+            elif st in ("scene_preference", "environment", "working_record") and v_sim >= 0.42:
                 sc = str(row.get("scene_col") or "").strip()
                 if not sc or sc in scenes or sc in negated_scenes:
                     continue
@@ -912,7 +948,7 @@ class SearchEngine:
             structured_reasons[alias_mid] = alias_reason
 
         max_select_sim = 0.0
-        if any(slot_plan.get(k) for k in ("applications", "businesses", "scenes", "time_windows")):
+        if any(slot_plan.get(k) for k in ("applications", "businesses", "scenes", "time_windows", "relative_date_range")):
             try:
                 for mid, s_sim, s_reason in self.index.select_by_slots(
                     ns,
@@ -920,6 +956,7 @@ class SearchEngine:
                     businesses=slot_plan.get("businesses"),
                     scenes=slot_plan.get("scenes"),
                     time_windows=slot_plan.get("time_windows"),
+                    relative_date_range=slot_plan.get("relative_date_range"),
                     subtypes=resolved_subtypes,
                     memory_types=resolved_mtypes,
                     statuses=statuses,
@@ -970,6 +1007,7 @@ class SearchEngine:
                         businesses=slot_plan.get("businesses"),
                         scenes=slot_plan.get("scenes"),
                         time_windows=slot_plan.get("time_windows"),
+                        relative_date_range=slot_plan.get("relative_date_range"),
                         subtypes=resolved_subtypes,
                         memory_types=resolved_mtypes,
                         statuses=statuses,
@@ -1069,6 +1107,10 @@ class SearchEngine:
                         matched_kws = [kw for kw in all_kws if str(kw).lower() in q_low or q_low in str(kw).lower()]
                         if matched_kws:
                             sim = max(sim, min(1.0, 0.75 + 0.1 * len(matched_kws)))
+                            if mid not in structured_reasons:
+                                structured_reasons[mid] = (
+                                    f"经验触发条件匹配: keywords={matched_kws} (v_sim={vector_sim_map.get(mid, 0.0):.2f})"
+                                )
 
             freshness, stability_factor, eff_lam = self._compute_freshness_and_stability(node, ts)
             eff_heat = self._compute_effective_heat(node, ts)

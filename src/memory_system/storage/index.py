@@ -202,6 +202,53 @@ def time_matches_window(queried_time: str, stored_window: str) -> bool:
     return False
 
 
+_CN_TO_CANONICAL_APP: Dict[str, str] = {
+    "抖音": "douyin",
+    "快手": "kuaishou",
+    "哔哩哔哩": "bilibili",
+    "微信": "wechat",
+    "腾讯会议": "tencent_meeting",
+    "钉钉": "dingtalk",
+    "飞书": "feishu",
+    "小红书": "xiaohongshu",
+    "王者荣耀": "wangzherongyao",
+    "高德地图": "gaode",
+    "虎牙": "huya",
+    "斗鱼直播": "douyu",
+    "和平精英": "hepingjingying",
+    "QQ": "qq",
+    "淘宝": "taobao",
+    "拼多多": "pdd",
+    "爱奇艺": "iqiyi",
+    "优酷": "youku",
+    "腾讯视频": "tencentvideo",
+    "咪咕": "migu",
+}
+
+_CN_TO_CANONICAL_BIZ: Dict[str, str] = {
+    "开直播": "openlive",
+    "看直播": "watch_live",
+    "短视频": "video",
+    "视频": "video",
+    "视频通话": "video_call",
+    "会议": "meeting",
+    "游戏": "game",
+    "云游戏": "game",
+}
+
+
+def _extract_ymd(ts_str: str) -> str:
+    if not ts_str:
+        return ""
+    m_cn = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", ts_str)
+    if m_cn:
+        return f"{int(m_cn.group(1)):04d}-{int(m_cn.group(2)):02d}-{int(m_cn.group(3)):02d}"
+    m_iso = re.search(r"(\d{4})-(\d{2})-(\d{2})", ts_str)
+    if m_iso:
+        return f"{m_iso.group(1)}-{m_iso.group(2)}-{m_iso.group(3)}"
+    return ""
+
+
 class MemoryIndex:
     """SQLite Vector + FTS5 + Structured Slot secondary index with RLock thread-safety and strict namespace scoping."""
 
@@ -294,12 +341,19 @@ class MemoryIndex:
         tokenized_search = tokenize_for_fts(raw_search)
         emb_json = json.dumps(list(embedding) if embedding is not None else [])
 
-        app_col = str(node.content.get("application") or node.content.get("application_name") or "").strip()
-        biz_col = str(node.content.get("business") or node.content.get("service_name") or "").strip()
+        raw_app = str(node.content.get("application") or node.content.get("application_name") or "").strip()
+        app_col = _CN_TO_CANONICAL_APP.get(raw_app, raw_app)
+        raw_biz = str(node.content.get("business") or node.content.get("service_name") or "").strip()
+        biz_col = _CN_TO_CANONICAL_BIZ.get(raw_biz, raw_biz)
         scene_col = str(node.content.get("scene") or node.content.get("environment") or node.content.get("location") or "").strip()
         time_window_col = str(node.content.get("time_window") or node.content.get("condition") or "").strip()
         alias_col = str(node.content.get("alias") or node.content.get("source_expression") or "").strip()
-        target_col = str(node.content.get("target") or node.content.get("value") or "").strip()
+        target_col = str(node.content.get("target") or node.content.get("value") or node.content.get("action") or "").strip()
+
+        if node.subtype == "working_record" and not time_window_col:
+            time_window_col = _extract_ymd(
+                str(node.content.get("created_at") or node.content.get("start_timestamp") or node.created_at or "")
+            )
 
         # Orthogonal separation: if an expression row maps an alias to a time_window (e.g. 午间例行 -> 12:30-13:30),
         # keep app_col and biz_col empty on the expression row so app/biz are strictly resolved via Hop 2 (periodic_preference).
@@ -610,6 +664,7 @@ class MemoryIndex:
         businesses: Optional[Sequence[str]] = None,
         scenes: Optional[Sequence[str]] = None,
         time_windows: Optional[Sequence[str]] = None,
+        relative_date_range: Optional[Tuple[str, str]] = None,
         subtypes: Optional[Sequence[str]] = None,
         memory_types: Optional[Sequence[str]] = None,
         statuses: Optional[Sequence[str]] = None,
@@ -636,8 +691,14 @@ class MemoryIndex:
         biz_set = {b.strip() for b in (businesses or []) if b and b.strip()}
         scene_set = {s.strip() for s in (scenes or []) if s and s.strip()}
         tw_list = [t.strip() for t in (time_windows or []) if t and t.strip()]
+        has_date_range = bool(
+            relative_date_range
+            and len(relative_date_range) == 2
+            and relative_date_range[0]
+            and relative_date_range[1]
+        )
 
-        if not (app_set or biz_set or scene_set or tw_list):
+        if not (app_set or biz_set or scene_set or tw_list or has_date_range):
             return []
 
         results: List[Tuple[str, float, str]] = []
@@ -656,6 +717,13 @@ class MemoryIndex:
             biz_hit = bool(biz_set and r_biz and r_biz in biz_set)
             scene_hit = bool(scene_set and r_scene and any(sc in r_scene or r_scene in sc for sc in scene_set))
             tw_hit = bool(tw_list and r_tw and any(time_matches_window(qt, r_tw) for qt in tw_list))
+            date_hit = bool(
+                st == "working_record"
+                and has_date_range
+                and r_tw
+                and len(r_tw) == 10
+                and relative_date_range[0] <= r_tw <= relative_date_range[1]  # type: ignore[index]
+            )
 
             if app_hit:
                 matched_fields.append(f"application={r_app}")
@@ -665,12 +733,14 @@ class MemoryIndex:
                 matched_fields.append(f"scene={r_scene}")
             if tw_hit:
                 matched_fields.append(f"time_window={r_tw}")
+            if date_hit and relative_date_range is not None:
+                matched_fields.append(f"created_date={r_tw}∈[{relative_date_range[0]}..{relative_date_range[1]}]")
 
             if not matched_fields:
                 continue
 
-            # Orthogonal Scheme A scoring across parameter nodes (scene_preference / preferred_value)
-            # and routing pointer nodes (periodic_preference / service_to_app)
+            # Orthogonal Scheme A scoring across parameter nodes (scene_preference / preferred_value),
+            # working memory records (working_record), and routing pointer nodes (periodic_preference / service_to_app)
             if st in ("scene_preference", "environment"):
                 if app_hit and biz_hit and scene_hit:
                     score = 0.98
@@ -687,6 +757,19 @@ class MemoryIndex:
                     score = 0.98 if not scene_set else 0.93
                 elif app_hit or biz_hit:
                     score = 0.85
+            elif st == "working_record":
+                if date_hit and (scene_hit or (app_hit and biz_hit)):
+                    score = 0.96
+                elif scene_hit and (app_hit or biz_hit):
+                    score = 0.94
+                elif date_hit:
+                    score = 0.91
+                elif scene_hit:
+                    score = 0.89
+                elif app_hit and biz_hit:
+                    score = 0.86
+                elif app_hit or biz_hit:
+                    score = 0.82
             elif st == "periodic_preference":
                 if app_hit and biz_hit and tw_hit:
                     score = 0.96
