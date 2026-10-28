@@ -33,14 +33,13 @@ SUBTYPE_CN = {
     "experience": "经验记忆卡片 (experience)",
 }
 
-# 首轮评测 (Run 1: 84/90) 6 个差异会话的完整记录与归因
-RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
+# 评测中 6 个 FAIL 会话的真实预测与归因
+FAIL_SESSIONS: Dict[str, Dict[str, Any]] = {
     "S-USER_005-13": {
-        "category": "代码缺陷：临时改参写入工作记忆账本导致检索污染",
-        "category_tag": "bug",
+        "category": "检索污染 (临时改参工单混入)",
         "failed_turns": [1, 2],
-        "wrong_fields": ["resolution", "rtt"],
-        "run1_pred": {
+        "wrong_fields": ["resolution"],
+        "pred": {
             "application_name": "抖音",
             "service_name": "开直播",
             "resolution": "720p",
@@ -58,19 +57,13 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "end_timestamp": "2026年10月23日10时30分",
             "duration": "120min",
         },
-        "root_cause": (
-            "前序会话 S-USER_005-09 为单次临时改参（correction_session，用户声明“画质临时调到720p，时延压到30ms以内，今天临时按这个来”）。"
-            "首轮评测时 _extract_working_record_from_session 未过滤 correction_session，将该次临时配置作为常规工单 REC_USER_005_20261014_09 写入 working_record。"
-            "在 S-USER_005-13 检索历史工单时命中该临时记录，导致模型回填 720p/30ms。"
-        ),
-        "resolution_note": "在 _extract_working_record_from_session 中过滤 correction_session / event_override，单次临时改参不入工作记忆基准工单库。",
+        "reason": "前序 S-USER_005-09 为单次临时改参（720p/30ms），会话结束后被写入 working_record；本会话检索历史工单时命中该临时记录，导致回填 720p/30ms。",
     },
     "S-USER_001-05": {
-        "category": "数据标注不一致：Turn 2 用户要求提前半小时，GT 的 turn_updates 未更新",
-        "category_tag": "gt_issue",
+        "category": "GT 标注未更新 Turn 2 时间偏移",
         "failed_turns": [2],
-        "wrong_fields": ["start_timestamp", "end_timestamp"],
-        "run1_pred": {
+        "wrong_fields": ["start_timestamp"],
+        "pred": {
             "application_name": "抖音",
             "service_name": "开直播",
             "resolution": "1080p",
@@ -88,19 +81,13 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "end_timestamp": "2026年09月25日13时30分",
             "duration": "60min",
         },
-        "root_cause": (
-            "Turn 1 用户指定时段为 12:30-13:30（模型预测 12:30-13:30，Turn 1 通过）。"
-            "Turn 2 用户明确要求“帮我把开始时间往前提前半小时吧”，Agent 回复“已为您将起保时间提前30分钟”。"
-            "模型据此在 Turn 2 将 start_timestamp 更新为 12:00；但数据集该样本 Turn 2 的 slot_updates.params 为空字典 {}，导致 GT 仍停留在 Turn 1 的 12:30。"
-        ),
-        "resolution_note": "模型首轮输出符合对话语义；二次评测通过提示词约束经验归纳轮保持 Turn 1 时间槽位以对齐现有 GT。",
+        "reason": "Turn 1 预测 12:30-13:30 通过；Turn 2 用户要求“把开始时间往前提前半小时”，模型更新 start_timestamp 为 12:00，但数据集 Turn 2 的 slot_updates 为空字典 {}，GT 仍保持 12:30。",
     },
     "S-USER_003-05": {
-        "category": "数据标注不一致：Turn 2 用户要求提前半小时，GT 的 turn_updates 未更新",
-        "category_tag": "gt_issue",
+        "category": "GT 标注未更新 Turn 2 时间偏移",
         "failed_turns": [2],
-        "wrong_fields": ["start_timestamp", "end_timestamp"],
-        "run1_pred": {
+        "wrong_fields": ["start_timestamp"],
+        "pred": {
             "application_name": "腾讯会议",
             "service_name": "会议",
             "resolution": "1080p",
@@ -118,18 +105,13 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "end_timestamp": "2026年09月25日16时00分",
             "duration": "120min",
         },
-        "root_cause": (
-            "与 S-USER_001-05 同一模板（experience_learning / EXP_PREWARM_BUFFER_01）。"
-            "Turn 1 用户指定 14:00-16:00（Turn 1 通过）；Turn 2 用户要求“把开始时间往前提前半小时吧”，模型更新为 13:30，而数据集 Turn 2 的 slot_updates.params 为空，GT 仍为 14:00。"
-        ),
-        "resolution_note": "模型首轮输出符合对话语义；二次评测对齐现有 GT 口径。",
+        "reason": "Turn 1 预测 14:00-16:00 通过；Turn 2 用户要求“把开始时间往前提前半小时”，模型更新 start_timestamp 为 13:30，但数据集 Turn 2 的 slot_updates 为空字典 {}，GT 仍保持 14:00。",
     },
     "S-USER_005-05": {
-        "category": "数据标注不一致：Turn 2 用户要求提前半小时，GT 的 turn_updates 未更新",
-        "category_tag": "gt_issue",
+        "category": "GT 标注未更新 Turn 2 时间偏移",
         "failed_turns": [2],
         "wrong_fields": ["start_timestamp"],
-        "run1_pred": {
+        "pred": {
             "application_name": "抖音",
             "service_name": "开直播",
             "resolution": "1080p",
@@ -144,21 +126,16 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "resolution": "1080p",
             "rtt": "50ms",
             "start_timestamp": "2026年09月25日08时30分",
-            "end_timestamp": "2026年09月25日10时30分",
+            "end_timestamp": "2026年10月25日10时30分".replace("10月", "09月"),
             "duration": "120min",
         },
-        "root_cause": (
-            "与 S-USER_001-05 同一模板（experience_learning / EXP_PREWARM_BUFFER_01）。"
-            "Turn 1 用户指定 08:30-10:30（Turn 1 通过）；Turn 2 用户要求“把开始时间往前提前半小时吧”，模型将 start_timestamp 更新为 08:00，而数据集 Turn 2 的 slot_updates.params 为空，GT 仍为 08:30。"
-        ),
-        "resolution_note": "模型首轮输出符合对话语义；二次评测对齐现有 GT 口径。",
+        "reason": "Turn 1 预测 08:30-10:30 通过；Turn 2 用户要求“把开始时间往前提前半小时”，模型更新 start_timestamp 为 08:00，但数据集 Turn 2 的 slot_updates 为空字典 {}，GT 仍保持 08:30。",
     },
     "S-USER_001-13": {
-        "category": "数据生成口径差异：工单改期前基准时间未在历史会话中显式建档",
-        "category_tag": "gt_issue",
+        "category": "工单改期基准时段偏差",
         "failed_turns": [1, 2],
-        "wrong_fields": ["start_timestamp", "end_timestamp"],
-        "run1_pred": {
+        "wrong_fields": ["start_timestamp"],
+        "pred": {
             "application_name": "抖音",
             "service_name": "开直播",
             "resolution": "1080p",
@@ -176,19 +153,13 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "end_timestamp": "2026年10月23日13时30分",
             "duration": "60min",
         },
-        "root_cause": (
-            "前序会话 S-USER_001-12 落库的历史工单时段为 12:30-13:30。"
-            "本会话用户说“把昨天预约的抖音开直播保障往后推迟一个小时”，模型读取到历史工单开始时间 12:30 后加 1 小时，输出 13:30-14:30。"
-            "但数据集生成器在构造该样本 GT 时，直接将用户的固定习惯时段 12:30-13:30 作为“推迟一小时之后”的目标值（隐含假定原预约时间为 11:30-12:30，而前序会话并无 11:30 的工单）。"
-        ),
-        "resolution_note": "在改期提示词中显式区分原预约时段（11:30-12:30）与改期后目标时段（12:30-13:30），消除工单基准时段歧义。",
+        "reason": "前序 S-USER_001-12 落库工单时段为 12:30-13:30，用户要求“把昨天预约的保障往后推迟一个小时”，模型基于历史工单 12:30 推算为 13:30-14:30；而 GT 直接将 12:30-13:30 作为推迟后的目标值。",
     },
     "S-USER_005-14": {
-        "category": "数据生成口径差异：工单改期前基准时间未在历史会话中显式建档",
-        "category_tag": "gt_issue",
+        "category": "工单改期基准时段偏差",
         "failed_turns": [1, 2],
-        "wrong_fields": ["start_timestamp", "end_timestamp"],
-        "run1_pred": {
+        "wrong_fields": ["start_timestamp"],
+        "pred": {
             "application_name": "抖音",
             "service_name": "开直播",
             "resolution": "1080p",
@@ -206,12 +177,7 @@ RUN1_DIFF_SESSIONS: Dict[str, Dict[str, Any]] = {
             "end_timestamp": "2026年10月26日10时30分",
             "duration": "120min",
         },
-        "root_cause": (
-            "前序会话落库的历史工单时段为 08:30-10:30。"
-            "本会话用户说“把昨天预约的抖音开直播保障提前一个小时开始”，模型在历史工单 08:30 基础上减 1 小时，输出 07:30-09:30。"
-            "数据集生成器同样将固定习惯时段 08:30-10:30 作为“提前一小时之后”的目标值（隐含假定原预约时间为 09:30-11:30）。"
-        ),
-        "resolution_note": "在改期提示词中显式区分原预约时段（09:30-11:30）与改期后目标时段（08:30-10:30），消除工单基准时段歧义。",
+        "reason": "前序落库工单时段为 08:30-10:30，用户要求“把昨天预约的保障提前一个小时开始”，模型基于历史工单 08:30 推算为 07:30-09:30；而 GT 直接将 08:30-10:30 作为提前后的目标值。",
     },
 }
 
@@ -222,38 +188,29 @@ def esc(v: Any) -> str:
 
 def render_html(data: Dict[str, Any]) -> str:
     users: List[Dict[str, Any]] = data.get("users", [])
-    by_tier: Dict[str, Dict[str, int]] = data.get("by_memory_tier", {})
     by_bp: Dict[str, Dict[str, int]] = data.get("by_blueprint", {})
 
-    # 1. 三层记忆汇总行 (同时展示首轮结果与对齐修复后结果)
-    tier_run1 = {
-        "factual_memory": (48, 48, 97, 97, "无差异"),
-        "working_memory": (19, 22, 43, 49, "1例临时改参污染工单检索 (S-USER_005-13)；2例改期前基准时间口径差异 (S-USER_001-13, S-USER_005-14)"),
-        "experiential_memory": (17, 20, 37, 40, "3例经验学习轮 Turn 2 用户要求提前半小时但 GT 未更新 (S-USER_001-05, 003-05, 005-05)"),
-    }
+    # 1. 三层记忆汇总表
+    tier_stats_run1 = [
+        ("factual_memory", 48, 48, 97, 97, "0 失败"),
+        ("working_memory", 19, 22, 43, 49, "3 失败：S-USER_001-13, S-USER_005-13, S-USER_005-14"),
+        ("experiential_memory", 17, 20, 37, 40, "3 失败：S-USER_001-05, S-USER_003-05, S-USER_005-05"),
+    ]
     tier_rows = []
-    for tier_key in ("factual_memory", "working_memory", "experiential_memory"):
-        st = by_tier.get(tier_key, {})
-        s_tot = st.get("sessions", 0)
-        t_tot = st.get("turns", 0)
-        r1_s_ok, _, r1_t_ok, _, note_str = tier_run1[tier_key]
-        r1_s_rate = f"{(r1_s_ok / s_tot * 100):.1f}%" if s_tot else "-"
-        r1_t_rate = f"{(r1_t_ok / t_tot * 100):.1f}%" if t_tot else "-"
-        r2_s_ok = st.get("session_ok", 0)
-        r2_t_ok = st.get("turn_ok", 0)
+    for t_key, s_ok, s_tot, t_ok, t_tot, note in tier_stats_run1:
+        s_rate = f"{(s_ok / s_tot * 100):.1f}%"
+        t_rate = f"{(t_ok / t_tot * 100):.1f}%"
         tier_rows.append(
             f"<tr>"
-            f"<td><b>{esc(TIER_CN.get(tier_key, tier_key))}</b></td>"
-            f"<td>{r1_s_ok} / {s_tot} (<b>{r1_s_rate}</b>)</td>"
-            f"<td>{r1_t_ok} / {t_tot} (<b>{r1_t_rate}</b>)</td>"
-            f"<td>{r2_s_ok} / {s_tot} (<b>100.0%</b>)</td>"
-            f"<td>{r2_t_ok} / {t_tot} (<b>100.0%</b>)</td>"
-            f"<td class='muted'>{esc(note_str)}</td>"
+            f"<td><b>{esc(TIER_CN.get(t_key, t_key))}</b></td>"
+            f"<td>{s_ok} / {s_tot} (<b>{s_rate}</b>)</td>"
+            f"<td>{t_ok} / {t_tot} (<b>{t_rate}</b>)</td>"
+            f"<td class='muted'>{esc(note)}</td>"
             f"</tr>"
         )
 
     # 2. 子场景 (Blueprint) 汇总表
-    bp_run1_fails = {
+    bp_run1_override = {
         "experiential_memory:experience_learning": (7, 10, 17, 20),
         "working_memory:working_record_reschedule": (6, 9, 12, 18),
     }
@@ -261,40 +218,37 @@ def render_html(data: Dict[str, Any]) -> str:
     for bp_key, st in sorted(by_bp.items()):
         s_tot = st.get("sessions", 0)
         t_tot = st.get("turns", 0)
-        if bp_key in bp_run1_fails:
-            r1_s_ok, _, r1_t_ok, _ = bp_run1_fails[bp_key]
+        if bp_key in bp_run1_override:
+            s_ok, _, t_ok, _ = bp_run1_override[bp_key]
         else:
-            r1_s_ok, r1_t_ok = s_tot, t_tot
-        r1_s_rate = f"{(r1_s_ok / s_tot * 100):.1f}%" if s_tot else "-"
-        r1_t_rate = f"{(r1_t_ok / t_tot * 100):.1f}%" if t_tot else "-"
+            s_ok, t_ok = s_tot, t_tot
+        s_rate = f"{(s_ok / s_tot * 100):.1f}%" if s_tot else "-"
+        t_rate = f"{(t_ok / t_tot * 100):.1f}%" if t_tot else "-"
         t_part, b_part = bp_key.split(":", 1)
         bp_rows.append(
             f"<tr>"
             f"<td><code>{esc(t_part)}</code></td>"
             f"<td><code>{esc(b_part)}</code></td>"
             f"<td>{s_tot}</td>"
-            f"<td>{r1_s_ok} / {s_tot} ({r1_s_rate})</td>"
-            f"<td>{r1_t_ok} / {t_tot} ({r1_t_rate})</td>"
-            f"<td>{st.get('session_ok', 0)} / {s_tot} (100.0%)</td>"
+            f"<td>{s_ok} / {s_tot} ({s_rate})</td>"
+            f"<td>{t_ok} / {t_tot} ({t_rate})</td>"
             f"</tr>"
         )
 
-    # 3. 6 个首轮差异会话归因明细表
+    # 3. 6 个失败会话归因表
     diff_rows = []
-    for sid, dinfo in RUN1_DIFF_SESSIONS.items():
-        tag_cls = "badge-bug" if dinfo["category_tag"] == "bug" else "badge-gt"
+    for sid, finfo in FAIL_SESSIONS.items():
         diff_rows.append(
             f"<tr>"
-            f"<td><b><code>{esc(sid)}</code></b><br/><span class='muted'>错误轮次: Turn {esc(dinfo['failed_turns'])}<br/>差异槽位: <code>{esc(', '.join(dinfo['wrong_fields']))}</code></span></td>"
-            f"<td><span class='badge {tag_cls}'>{esc(dinfo['category'])}</span></td>"
-            f"<td><div class='code-cmp'><b>首轮 Pred:</b> <code>{esc(json.dumps(dinfo['run1_pred'], ensure_ascii=False))}</code><br/>"
-            f"<b>数据集 GT:</b> <code>{esc(json.dumps(dinfo['gt'], ensure_ascii=False))}</code></div></td>"
-            f"<td>{esc(dinfo['root_cause'])}</td>"
-            f"<td>{esc(dinfo['resolution_note'])}</td>"
+            f"<td><b><code>{esc(sid)}</code></b><br/><span class='muted'>Turn {esc(finfo['failed_turns'])} · 槽位: <code>{esc(', '.join(finfo['wrong_fields']))}</code></span></td>"
+            f"<td><span class='badge fail'>{esc(finfo['category'])}</span></td>"
+            f"<td><div class='code-cmp'><b>Pred:</b> <code>{esc(json.dumps(finfo['pred'], ensure_ascii=False))}</code><br/>"
+            f"<b>GT:</b> <code>{esc(json.dumps(finfo['gt'], ensure_ascii=False))}</code></div></td>"
+            f"<td>{esc(finfo['reason'])}</td>"
             f"</tr>"
         )
 
-    # 4. 5 个 Persona 的逐会话详情
+    # 4. 5 个 Persona 样本列表
     tabs_html = []
     panels_html = []
     for i, u in enumerate(users):
@@ -303,11 +257,14 @@ def render_html(data: Dict[str, Any]) -> str:
         p_dir = u["persona_dir"]
         s_tot = u["session_total"]
         t_tot = u["turn_total"]
-        r1_fail_cnt = sum(1 for s in u.get("sessions", []) if s["session_id"] in RUN1_DIFF_SESSIONS)
-        r1_ok_cnt = s_tot - r1_fail_cnt
+        fail_s_cnt = sum(1 for s in u.get("sessions", []) if s["session_id"] in FAIL_SESSIONS)
+        fail_t_cnt = sum(len(FAIL_SESSIONS[s["session_id"]]["failed_turns"]) for s in u.get("sessions", []) if s["session_id"] in FAIL_SESSIONS)
+        ok_s_cnt = s_tot - fail_s_cnt
+        ok_t_cnt = t_tot - fail_t_cnt
+
         tabs_html.append(
             f"<button class='tab-btn {active_cls}' onclick=\"switchTab('user-{i}', this)\">"
-            f"{esc(p_dir)} ({esc(uid)}) · 首轮 {r1_ok_cnt}/{s_tot} · 修复后 {s_tot}/{s_tot}"
+            f"{esc(p_dir)} ({esc(uid)}) · Session {ok_s_cnt}/{s_tot} · Turn {ok_t_cnt}/{t_tot}"
             f"</button>"
         )
 
@@ -320,28 +277,21 @@ def render_html(data: Dict[str, Any]) -> str:
             bp = s["blueprint_type"]
             env = s["environment"]
             ref_t = s["reference_time"]
-            is_r1_diff = sid in RUN1_DIFF_SESSIONS
-            r1_info = RUN1_DIFF_SESSIONS.get(sid)
+            is_fail = sid in FAIL_SESSIONS
+            finfo = FAIL_SESSIONS.get(sid)
+            t_tot_s = s["turn_total_count"]
+            t_ok_s = t_tot_s - (len(finfo["failed_turns"]) if finfo else 0)
 
-            if is_r1_diff and r1_info is not None:
-                status_badge = (
-                    f"<span class='badge fail'>首轮 FAIL ({esc(','.join(r1_info['wrong_fields']))})</span> "
-                    f"<span class='badge pass'>修复后 PASS</span>"
-                )
-            else:
-                status_badge = "<span class='badge pass'>首轮 & 修复后 PASS ✓</span>"
-
-            diff_banner = ""
-            if is_r1_diff and r1_info is not None:
+            if is_fail and finfo is not None:
+                status_badge = f"<span class='badge fail'>FAIL ✗ (wrong: {esc(','.join(finfo['wrong_fields']))}) · Turn {t_ok_s}/{t_tot_s}</span>"
                 diff_banner = (
                     f"<div class='diff-alert'>"
-                    f"<b>[首轮差异归因 - {esc(r1_info['category'])}]</b><br/>"
-                    f"• <b>原因</b>：{esc(r1_info['root_cause'])}<br/>"
-                    f"• <b>首轮预测 (Run 1 Pred)</b>：<code>{esc(json.dumps(r1_info['run1_pred'], ensure_ascii=False))}</code><br/>"
-                    f"• <b>数据集真值 (GT)</b>：<code>{esc(json.dumps(r1_info['gt'], ensure_ascii=False))}</code><br/>"
-                    f"• <b>修复措施</b>：{esc(r1_info['resolution_note'])}"
+                    f"<b>错误归因 ({esc(finfo['category'])})：</b>{esc(finfo['reason'])}"
                     f"</div>"
                 )
+            else:
+                status_badge = f"<span class='badge pass'>PASS ✓ · Turn {t_ok_s}/{t_tot_s}</span>"
+                diff_banner = ""
 
             turn_blocks = []
             for tr in s.get("turns", []):
@@ -406,30 +356,26 @@ def render_html(data: Dict[str, Any]) -> str:
                         f"<b>[经验记忆卡片 (experience)]</b> <code>{esc(exh.get('experience_id'))}</code> ({esc(exh.get('title'))}, score={exh.get('score', 0.0):.3f})"
                         f"</div>"
                     )
-                hits_html = "".join(hit_items) if hit_items else "<div class='muted'>无历史记忆命中（首次建档或域外请求）</div>"
+                hits_html = "".join(hit_items) if hit_items else "<div class='muted'>无历史记忆命中</div>"
 
                 eval_rows = []
                 for ed in tr.get("eval_details", []):
                     ik = ed["intent_key"]
                     gt_d = ed.get("gt") or {}
                     pr_d = ed.get("pred") or {}
-                    r1_turn_fail = is_r1_diff and r1_info is not None and (t_no in r1_info["failed_turns"])
-                    if r1_turn_fail and r1_info is not None:
-                        m_badge = (
-                            f"<span class='t-fail'>首轮差异: {esc(r1_info['wrong_fields'])}</span> · "
-                            f"<span class='t-ok'>修复后: ✓ 7槽位全对</span>"
-                        )
-                        r1_line = f"<div><span class='lbl'>首轮 Pred:</span> <code>{esc(json.dumps(r1_info['run1_pred'], ensure_ascii=False))}</code></div>"
+                    turn_failed = is_fail and finfo is not None and (t_no in finfo["failed_turns"])
+                    if turn_failed and finfo is not None:
+                        pr_show = finfo["pred"]
+                        m_badge = f"<span class='t-fail'>✗ 槽位不一致: {esc(finfo['wrong_fields'])}</span>"
                     else:
-                        m_badge = "<span class='t-ok'>✓ 7槽位全对</span>"
-                        r1_line = ""
+                        pr_show = pr_d
+                        m_badge = "<span class='t-ok'>✓ 匹配</span>"
                     eval_rows.append(
                         f"<div class='slot-box'>"
                         f"<div><b>意图 {esc(ik)}</b> {m_badge}</div>"
                         f"<div class='slot-grid'>"
-                        f"{r1_line}"
-                        f"<div><span class='lbl'>最终 Pred:</span> <code>{esc(json.dumps(pr_d, ensure_ascii=False))}</code></div>"
-                        f"<div><span class='lbl'>真值 (GT):</span> <code>{esc(json.dumps(gt_d, ensure_ascii=False))}</code></div>"
+                        f"<div><span class='lbl'>Pred:</span> <code>{esc(json.dumps(pr_show, ensure_ascii=False))}</code></div>"
+                        f"<div><span class='lbl'>GT:</span> <code>{esc(json.dumps(gt_d, ensure_ascii=False))}</code></div>"
                         f"</div>"
                         f"</div>"
                     )
@@ -442,17 +388,17 @@ def render_html(data: Dict[str, Any]) -> str:
                     f"<div class='utterance user-u'><b>用户:</b> {esc(u_utt)}</div>"
                     f"<div class='utterance agent-u'><b>助手:</b> {esc(a_utt)}</div>"
                     f"<div class='sub-sec'><b>轮前记忆检索:</b>{hits_html}</div>"
-                    f"<div class='sub-sec'><b>意图槽位评测:</b>{''.join(eval_rows)}</div>"
+                    f"<div class='sub-sec'><b>意图评测:</b>{''.join(eval_rows)}</div>"
                     f"</div>"
                 )
 
             sess_cards.append(
-                f"<div class='sess-card' data-tier='{esc(tier)}' data-r1diff='{'1' if is_r1_diff else '0'}'>"
+                f"<div class='sess-card' data-tier='{esc(tier)}' data-fail='{'1' if is_fail else '0'}'>"
                 f"<div class='sess-hdr'>"
                 f"<div><b>#{idx:02d} · <code>{esc(sid)}</code></b> · "
                 f"<span class='badge tier-{esc(tier)}'>{esc(TIER_CN.get(tier, tier))}</span> · "
                 f"<span class='badge'>{esc(ROLE_CN.get(role, role))}</span> · "
-                f"子场景 <code>{esc(bp)}</code> · 模板 <code>{esc(tpl)}</code> · {esc(env)} · {esc(ref_t)}</div>"
+                f"<code>{esc(bp)}</code> · <code>{esc(tpl)}</code> · {esc(env)} · {esc(ref_t)}</div>"
                 f"<div>{status_badge}</div>"
                 f"</div>"
                 f"{diff_banner}"
@@ -470,7 +416,7 @@ def render_html(data: Dict[str, Any]) -> str:
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"/>
-<title>三层认知记忆数据集 (cognitive_samples) 意图理解评测与错误归因报告</title>
+<title>cognitive_samples 意图评测与错误归因报告</title>
 <style>
   :root {{
     --bg: #f6f7f9;
@@ -483,8 +429,6 @@ def render_html(data: Dict[str, Any]) -> str:
     --ok-bg: #e6f4ea;
     --fail: #b91c1c;
     --fail-bg: #fce8e6;
-    --warn-bg: #fff8e6;
-    --warn-border: #f0c05a;
   }}
   body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -495,32 +439,32 @@ def render_html(data: Dict[str, Any]) -> str:
     line-height: 1.5;
     font-size: 13.5px;
   }}
-  h1 {{ margin: 0 0 6px 0; font-size: 21px; color: #111827; }}
-  h2 {{ margin: 22px 0 10px 0; font-size: 16px; color: #1f2937; border-left: 4px solid var(--primary); padding-left: 8px; }}
-  .subtitle {{ color: var(--muted); margin-bottom: 18px; font-size: 13px; }}
+  h1 {{ margin: 0 0 6px 0; font-size: 20px; color: #111827; }}
+  h2 {{ margin: 20px 0 10px 0; font-size: 15px; color: #1f2937; border-left: 4px solid var(--primary); padding-left: 8px; }}
+  .subtitle {{ color: var(--muted); margin-bottom: 16px; font-size: 13px; }}
   .summary-grid {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }}
   .stat-card {{
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 12px 16px;
   }}
   .stat-card .k {{ color: var(--muted); font-size: 12px; }}
-  .stat-card .v {{ color: var(--primary); font-size: 22px; font-weight: 700; margin-top: 4px; }}
+  .stat-card .v {{ color: var(--primary); font-size: 21px; font-weight: 700; margin-top: 4px; }}
   .stat-card .sub {{ color: var(--muted); font-size: 12px; margin-top: 2px; }}
   table.tbl {{
     width: 100%;
     border-collapse: collapse;
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     overflow: hidden;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
     font-size: 13px;
   }}
   table.tbl th, table.tbl td {{
@@ -541,8 +485,6 @@ def render_html(data: Dict[str, Any]) -> str:
   }}
   .badge.pass {{ background: var(--ok-bg); color: var(--ok); }}
   .badge.fail {{ background: var(--fail-bg); color: var(--fail); }}
-  .badge-bug {{ background: var(--fail-bg); color: var(--fail); }}
-  .badge-gt {{ background: var(--warn-bg); color: #8a5300; border: 1px solid var(--warn-border); }}
   .tier-factual_memory {{ background: #e8f0fe; color: #1967d2; }}
   .tier-working_memory {{ background: #fef3c7; color: #92400e; }}
   .tier-experiential_memory {{ background: #ede9fe; color: #5b21b6; }}
@@ -552,15 +494,15 @@ def render_html(data: Dict[str, Any]) -> str:
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }}
   .tabs, .filters {{ display: flex; gap: 8px; flex-wrap: wrap; }}
   .tab-btn, .flt-btn {{
-    padding: 7px 13px;
+    padding: 6px 12px;
     border: 1px solid var(--border);
     background: #fff;
     color: var(--text);
-    border-radius: 6px;
+    border-radius: 5px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
@@ -571,54 +513,55 @@ def render_html(data: Dict[str, Any]) -> str:
   .sess-card {{
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 13px 16px;
-    margin-bottom: 12px;
+    border-radius: 6px;
+    padding: 12px 15px;
+    margin-bottom: 10px;
   }}
   .sess-hdr {{
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-bottom: 1px solid #ebeef5;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
+    padding-bottom: 7px;
+    margin-bottom: 8px;
     font-size: 13px;
   }}
   .diff-alert {{
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-border);
-    border-radius: 6px;
-    padding: 9px 12px;
-    margin-bottom: 10px;
+    background: var(--fail-bg);
+    border: 1px solid #f5c2c7;
+    color: #842029;
+    border-radius: 5px;
+    padding: 7px 10px;
+    margin-bottom: 8px;
     font-size: 12.5px;
   }}
-  .turns-wrap {{ display: grid; gap: 8px; }}
+  .turns-wrap {{ display: grid; gap: 7px; }}
   .turn-card {{
     background: #fafbfc;
     border: 1px solid #e5e7eb;
-    border-radius: 6px;
-    padding: 9px 12px;
+    border-radius: 5px;
+    padding: 8px 11px;
   }}
-  .turn-hdr {{ font-weight: 600; font-size: 12.5px; margin-bottom: 5px; color: var(--primary); }}
+  .turn-hdr {{ font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--primary); }}
   .utterance {{ padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 13px; }}
   .user-u {{ background: #f0f4f8; }}
   .agent-u {{ background: #f8f9fa; color: #4b5563; }}
-  .sub-sec {{ margin-top: 6px; font-size: 12.5px; }}
+  .sub-sec {{ margin-top: 5px; font-size: 12px; }}
   .mem-hit {{
     background: #fff;
     border-left: 3px solid var(--primary);
-    padding: 4px 8px;
-    margin-top: 4px;
+    padding: 3px 8px;
+    margin-top: 3px;
     font-size: 12px;
   }}
   .slot-box {{
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 4px;
-    padding: 6px 9px;
-    margin-top: 4px;
+    padding: 5px 8px;
+    margin-top: 3px;
   }}
-  .slot-grid {{ display: grid; gap: 3px; margin-top: 3px; font-size: 12px; }}
+  .slot-grid {{ display: grid; gap: 2px; margin-top: 2px; font-size: 12px; }}
   .lbl {{ color: var(--muted); font-weight: 600; }}
   .t-ok {{ color: var(--ok); font-weight: 600; }}
   .t-fail {{ color: var(--fail); font-weight: 600; }}
@@ -634,45 +577,43 @@ def render_html(data: Dict[str, Any]) -> str:
 </style>
 </head>
 <body>
-  <h1>三层认知记忆数据集 (cognitive_samples) 意图理解评测与错误归因报告</h1>
+  <h1>三层认知记忆数据集 (cognitive_samples) 意图评测报告</h1>
   <div class="subtitle">
-    数据集: <code>D:\\coding\\cross_memory_data\\data\\cognitive_samples</code> (5 个用户画像, 90 个多轮会话, 186 个评估轮次) ·
+    数据集: <code>D:\\coding\\cross_memory_data\\data\\cognitive_samples</code> (5 个画像, 90 个会话, 186 个评估轮次) ·
     意图模型: <code>{esc(data.get('intent_model'))}</code> · 向量模型: <code>{esc(data.get('embedding_model'))}</code>
   </div>
 
   <div class="summary-grid">
     <div class="stat-card">
-      <div class="k">首轮评测准确率 (Run 1 原始结果)</div>
+      <div class="k">总体会话准确率 (Session JGA)</div>
       <div class="v">84 / 90 (93.33%)</div>
       <div class="sub">轮次级 Turn JGA: 177 / 186 (95.16%)</div>
     </div>
     <div class="stat-card">
-      <div class="k">修复检索污染 Bug 后真实准确率</div>
-      <div class="v">85 / 90 (94.44%)</div>
-      <div class="sub">轮次级 Turn JGA: 181 / 186 (97.31%)</div>
+      <div class="k">事实记忆 (factual_memory)</div>
+      <div class="v">48 / 48 (100.0%)</div>
+      <div class="sub">Turn JGA: 97 / 97 (100.0%)</div>
     </div>
     <div class="stat-card">
-      <div class="k">对齐数据集 GT 标注口径后准确率</div>
-      <div class="v">90 / 90 (100.0%)</div>
-      <div class="sub">轮次级 Turn JGA: 186 / 186 (100.0%)</div>
+      <div class="k">工作记忆 (working_memory)</div>
+      <div class="v">19 / 22 (86.4%)</div>
+      <div class="sub">Turn JGA: 43 / 49 (87.8%)</div>
     </div>
     <div class="stat-card">
-      <div class="k">首轮 6 个差异会话归因分布</div>
-      <div class="v">1 代码缺陷 + 5 标注口径</div>
-      <div class="sub">事实记忆 0 差异 · 工作记忆 3 · 经验记忆 3</div>
+      <div class="k">经验记忆 (experiential_memory)</div>
+      <div class="v">17 / 20 (85.0%)</div>
+      <div class="sub">Turn JGA: 37 / 40 (92.5%)</div>
     </div>
   </div>
 
-  <h2>1. 三层认知记忆分项评测汇总</h2>
+  <h2>1. 三层记忆汇总</h2>
   <table class="tbl">
     <thead>
       <tr>
         <th>记忆层级 (Memory Tier)</th>
-        <th>首轮会话准确率 (Run 1 Session JGA)</th>
-        <th>首轮轮次准确率 (Run 1 Turn JGA)</th>
-        <th>修复对齐后会话准确率</th>
-        <th>修复对齐后轮次准确率</th>
-        <th>首轮差异说明</th>
+        <th>会话准确率 (Session JGA)</th>
+        <th>轮次准确率 (Turn JGA)</th>
+        <th>失败样本</th>
       </tr>
     </thead>
     <tbody>
@@ -680,15 +621,14 @@ def render_html(data: Dict[str, Any]) -> str:
     </tbody>
   </table>
 
-  <h2>2. 首轮 6 个差异会话逐例错误归因明细</h2>
+  <h2>2. 失败样本错误归因 (共 6 例)</h2>
   <table class="tbl">
     <thead>
       <tr>
-        <th style="width:150px;">会话 ID / 差异位置</th>
-        <th style="width:190px;">归因类别</th>
-        <th style="width:320px;">首轮预测 (Run 1 Pred) vs 真值 (GT)</th>
-        <th>根因分析</th>
-        <th style="width:220px;">修复与对齐方式</th>
+        <th style="width:150px;">会话 ID / 失败轮次</th>
+        <th style="width:190px;">归因类型</th>
+        <th style="width:360px;">模型预测 (Pred) vs 真值 (GT)</th>
+        <th>具体原因</th>
       </tr>
     </thead>
     <tbody>
@@ -696,16 +636,15 @@ def render_html(data: Dict[str, Any]) -> str:
     </tbody>
   </table>
 
-  <h2>3. 全部子场景 (Blueprint) 评测统计</h2>
+  <h2>3. 子场景 (Blueprint) 统计</h2>
   <table class="tbl">
     <thead>
       <tr>
         <th>记忆层级</th>
         <th>子场景 (blueprint_type)</th>
         <th>会话数</th>
-        <th>首轮 Session JGA</th>
-        <th>首轮 Turn JGA</th>
-        <th>对齐修复后 Session JGA</th>
+        <th>Session JGA</th>
+        <th>Turn JGA</th>
       </tr>
     </thead>
     <tbody>
@@ -713,14 +652,14 @@ def render_html(data: Dict[str, Any]) -> str:
     </tbody>
   </table>
 
-  <h2>4. 全量 90 个会话逐轮意图评测明细 (按画像与场景筛选)</h2>
+  <h2>4. 全量 90 个样本评测详情</h2>
   <div class="toolbar">
     <div class="tabs">
       {''.join(tabs_html)}
     </div>
     <div class="filters">
-      <button class="flt-btn active" onclick="filterCards('all', this)">全部会话</button>
-      <button class="flt-btn" onclick="filterCards('r1diff', this)">仅看首轮差异会话 (6)</button>
+      <button class="flt-btn active" onclick="filterCards('all', this)">全部会话 (90)</button>
+      <button class="flt-btn" onclick="filterCards('fail', this)">仅看失败会话 (6)</button>
       <button class="flt-btn" onclick="filterCards('factual_memory', this)">事实记忆 (48)</button>
       <button class="flt-btn" onclick="filterCards('working_memory', this)">工作记忆 (22)</button>
       <button class="flt-btn" onclick="filterCards('experiential_memory', this)">经验记忆 (20)</button>
@@ -742,8 +681,8 @@ function filterCards(mode, btn) {{
   document.querySelectorAll('.sess-card').forEach(card => {{
     if (mode === 'all') {{
       card.style.display = 'block';
-    }} else if (mode === 'r1diff') {{
-      card.style.display = card.dataset.r1diff === '1' ? 'block' : 'none';
+    }} else if (mode === 'fail') {{
+      card.style.display = card.dataset.fail === '1' ? 'block' : 'none';
     }} else {{
       card.style.display = card.dataset.tier === mode ? 'block' : 'none';
     }}
