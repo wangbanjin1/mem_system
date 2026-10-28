@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 SOURCE_REPORT_JSON = Path(r"D:\coding\memory_system\test\e2e_cognitive_samples_report.json")
-EVAL_RUN_DIR = Path(r"D:\coding\memory_system\eval_results\run_01_cognitive_samples")
+EVAL_RUN_DIR = Path(r"D:\coding\qwen_intent_rag\eval_results\run_01_cognitive_samples")
 SESSIONS_DIR = EVAL_RUN_DIR / "sessions"
 
 EVAL_SLOTS = [
@@ -828,7 +828,7 @@ def render_master_index_html(data: Dict[str, Any]) -> str:
 <body>
   <h1>三层认知记忆数据集 (cognitive_samples) 意图理解评测总览</h1>
   <div class="subtitle">
-    评测结果存储目录: <code>D:\\coding\\memory_system\\eval_results\\run_01_cognitive_samples\\</code> (含 <code>summary.json</code> 及 <code>sessions/</code> 下 90 个单样本 HTML/JSON) ·
+    评测结果存储目录: <code>D:\\coding\\qwen_intent_rag\\eval_results\\run_01_cognitive_samples\\</code> (含 <code>summary.json</code> 及 <code>sessions/</code> 下 90 个单样本 HTML/JSON) ·
     模型: <code>{esc(data.get('intent_model'))}</code> + <code>{esc(data.get('embedding_model'))}</code>
   </div>
 
