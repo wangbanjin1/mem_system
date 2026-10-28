@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>三层认知记忆系统：萃取存储、检索机制与泛化方案</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-6">
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Header -->
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 class="text-xl font-bold text-[var(--foreground)]">三层认知记忆系统架构总结：存储、检索与泛化方案</h1>
+          <p class="text-sm text-[var(--muted-foreground)] mt-1">
+            核心范式：右侧自然语言向量锚点解锁 &rarr; 左侧结构化槽位列 <code class="px-1.5 py-0.5 rounded bg-[var(--secondary)] text-xs">SELECT</code> 唯一定位
+          </p>
+        </div>
+        <div class="flex gap-2 text-xs font-semibold">
+          <span class="px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-600 border border-blue-500/20">事实记忆：动态演化</span>
+          <span class="px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-600 border border-amber-500/20">工作记忆：静态工单时间对齐</span>
+          <span class="px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-600 border border-purple-500/20">经验记忆：澄清归纳 + 快速闭环</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex flex-wrap gap-2 border-b border-[var(--border)] pb-3">
+      <button onclick="showSection('sec-storage', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--primary)] text-[var(--primary-foreground)]">
+        1. 萃取与双索引存储
+      </button>
+      <button onclick="showSection('sec-retrieval', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        2. 三层记忆检索机制
+      </button>
+      <button onclick="showSection('sec-generalization', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        3. 短窗口向量匹配（泛化方案）
+      </button>
+      <button onclick="showSection('sec-eval', this)" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]">
+        4. 首轮评测基线 (93.33%)
+      </button>
+    </div>
+
+    <!-- Section 1: Storage & Extraction -->
+    <div id="sec-storage" class="sec-panel space-y-4">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-[var(--foreground)]">一、三层记忆的萃取时机与单库双索引存储结构</h2>
+        <p class="text-sm text-[var(--muted-foreground)]">
+          每条记忆节点在底层同时维护 <b>左侧结构化槽位列（供 SQL 精确过滤与整行读取）</b> 与 <b>右侧向量锚点列（仅对自然语言短语建 Embedding）</b>，严格区分动静态生命周期：
+        </p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse border border-[var(--border)]">
+            <thead>
+              <tr class="bg-[var(--secondary)] text-left">
+                <th class="border border-[var(--border)] p-3 w-36">记忆层级</th>
+                <th class="border border-[var(--border)] p-3 w-32">动静态属性</th>
+                <th class="border border-[var(--border)] p-3 w-48">子表类型 (<code class="text-xs">subtype</code>)</th>
+                <th class="border border-[var(--border)] p-3">左侧：结构化槽位列 (<code class="text-xs">content</code>)</th>
+                <th class="border border-[var(--border)] p-3 w-64">右侧：向量锚点列 (<code class="text-xs">vector_anchor</code>)</th>
+                <th class="border border-[var(--border)] p-3 w-52">萃取方式</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              <tr>
+                <td class="border border-[var(--border)] p-3 font-semibold text-blue-600">1. 事实记忆<br/><span class="text-xs font-normal text-[var(--muted-foreground)]">factual_memory</span></td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <b>动态演化</b><br/>投票晋升 (<code class="text-xs">candidate&rarr;active</code>) + 艾宾浩斯衰减
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs space-y-1">
+                  <div><code>preferred_value</code> (主参数)</div>
+                  <div><code>scene_preference</code> (支线场景)</div>
+                  <div><code>periodic_preference</code> (周期路由)</div>
+                  <div><code>service_to_app</code> (业务路由)</div>
+                  <div><code>expression</code> (黑话词典)</div>
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <code>application</code>, <code>business</code>, <code>resolution</code>, <code>rtt</code>, <code>time_window</code>, <code>target</code> (黑话标准档位)
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  周期短语（如“午间例行”）<br/>
+                  场景短语（如“大巴转场途中”）<br/>
+                  个人黑话（如“千万别转圈”）
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  会话结束时抽取显式习惯声明（如“以后老规矩…”、“我说X是指Y”），单次临时改参不覆盖长期记录
+                </td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-3 font-semibold text-amber-600">2. 工作记忆<br/><span class="text-xs font-normal text-[var(--muted-foreground)]">working_memory</span></td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <b>静态流水账</b><br/><code>vote=1</code> 即生效<br/><code>decay=0.0</code> 不衰减
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <code>working_record</code><br/>(历史保障工单账本)
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <code>record_id</code>, <code>created_at</code> (落单日期), <code>application_name</code>, <code>service_name</code>, <code>resolution</code>, <code>rtt</code>, <code>start/end_timestamp</code>, <code>duration</code>, <code>location</code>
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  工单办理地点（如“露天高山滑雪训练基地”）+ 业务描述词
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  每次正式保障会话 <code>resolved</code> 后，直接提取 7 个槽位与基准时间追加一条工单记录
+                </td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-3 font-semibold text-purple-600">3. 经验记忆<br/><span class="text-xs font-normal text-[var(--muted-foreground)]">experiential_memory</span></td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <b>归纳激活</b><br/>纠偏结晶后长期生效
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <code>experience</code><br/>(场景排障与映射规则卡)
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  <code>experience_id</code>, <code>condition</code>, <code>action</code>, <code>suggested_adjustments</code> (目标业务覆写、时间偏移 <code>start_offset=-30min</code> 等)
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  触发条件关键词（如“当连麦嘉宾上麦”、“对直播词试机位”、“重大活动保障”）
+                </td>
+                <td class="border border-[var(--border)] p-3 text-xs">
+                  在多轮澄清/纠偏会话（Turn 2 用户解释原因并修正参数）结束时，归纳为结构化经验卡
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Retrieval Mechanism -->
+    <div id="sec-retrieval" class="sec-panel hidden space-y-4">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-[var(--foreground)]">二、统一向量锚点池与三层记忆分流检索</h2>
+        <p class="text-sm text-[var(--muted-foreground)]">
+          检索时不预先猜测查询哪一列，而是将单用户的全部短语锚点（10~30 条）放入<b>统一向量锚点池</b>，每个锚点自带 <code>subtype</code> 标签。输入话术匹配锚点后，按命中的标签分流取数：
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Factual Memory Card -->
+          <div class="border border-[var(--border)] rounded-lg p-4 space-y-2">
+            <div class="text-sm font-bold text-blue-600">1. 事实记忆：锚点解锁 &rarr; 二跳 SELECT</div>
+            <p class="text-xs text-[var(--muted-foreground)]">解决周期偏好、场景偏好与个人黑话复用</p>
+            <ol class="text-xs space-y-1.5 list-decimal list-inside">
+              <li><b>一跳解锁锚点</b>：如话术命中 <code>periodic_preference</code>（“午间例行”），解锁左列 <code>time_window='12:30-13:30'</code>, <code>app='抖音'</code>, <code>biz='openlive'</code>；命中 <code>expression</code>（“千万别转圈”）解锁 <code>rtt='50ms'</code>。</li>
+              <li><b>二跳关联查询</b>：以解锁出的 <code>(app, biz, scene)</code> 作为 <code>WHERE</code> 条件，去 <code>preferred_value</code> 或 <code>scene_preference</code> 表执行 <code>SELECT</code>。</li>
+              <li><b>唯一返回</b>：仅返回得分最高的一条主记录，直接补齐 7 个槽位。</li>
+            </ol>
+          </div>
+
+          <!-- Working Memory Card -->
+          <div class="border border-[var(--border)] rounded-lg p-4 space-y-2">
+            <div class="text-sm font-bold text-amber-600">2. 工作记忆：时间窗换算 + 多列动态 SELECT</div>
+            <p class="text-xs text-[var(--muted-foreground)]">解决“上周/上个月初/昨天预约/之前那笔”跨期工单指代</p>
+            <ol class="text-xs space-y-1.5 list-decimal list-inside">
+              <li><b>时间列换算</b>：基于当前 <code>reference_time</code> 将口语时间词换算为日期区间（<code>昨天预约</code>&rarr;&Delta;&isin;[1,3]天；<code>上周</code>&rarr;&Delta;&isin;[5,10]天；<code>上个月初</code>&rarr;上一自然月；<code>上一次</code>&rarr;<code>ORDER BY created_at DESC LIMIT 1</code>）。</li>
+              <li><b>可选列动态拼接</b>：提及业务则加 <code>service</code> 过滤，提及应用则加 <code>app</code> 过滤，提及地点则由向量锚点转成标准 <code>location</code> 过滤（未提及的列不限制）。</li>
+              <li><b>两阶段收敛闭环</b>：若 <code>SELECT</code> 出的规格唯一则单步回填；若仅说模糊词“之前”且查出 &ge;2 种不同规格，则 <b>Turn 1 留空画质/时延挂起追问</b>，<b>Turn 2</b> 按用户补充的“最近那次”做二次排序锁定。</li>
+            </ol>
+          </div>
+
+          <!-- Experiential Memory Card -->
+          <div class="border border-[var(--border)] rounded-lg p-4 space-y-2">
+            <div class="text-sm font-bold text-purple-600">3. 经验记忆：一跳直达 &amp; 双分支闭环</div>
+            <p class="text-xs text-[var(--muted-foreground)]">解决复杂场景业务映射与预热/顺延策略</p>
+            <ol class="text-xs space-y-1.5 list-decimal list-inside">
+              <li><b>分支 A（多轮澄清归纳）</b>：首次遇到新场景未命中经验卡时，Turn 1 按字面理解，Turn 2 根据用户纠偏说明完成修改并在会话末结晶出 <code>experience</code> 卡片。</li>
+              <li><b>分支 B（单轮快速闭环）</b>：后续会话首轮命中已激活 <code>experience</code> 卡片的触发词（如“连麦嘉宾”、“对一下直播词”、“重大活动保障”），<b>无需二跳、无需追问</b>，直接读取卡片左列的 <code>action</code> 规则（如改写为 <code>抖音/开直播</code> 或起保时间提前 30 分钟）一步闭环。</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 3: Sliding-Window Generalization -->
+    <div id="sec-generalization" class="sec-panel hidden space-y-4">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-[var(--foreground)]">三、短窗口向量匹配（Sliding-Window Vector Matching）：提升开放口语泛化性</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div class="border border-[var(--border)] rounded-lg p-4 space-y-2">
+            <div class="font-bold text-sm text-[var(--foreground)]">传统规则切分 / 整句向量的痛点</div>
+            <ul class="list-disc list-inside space-y-1 text-[var(--muted-foreground)]">
+              <li><b>无标点长句切不开</b>：语音转写常一逗到底（如<i>“今天我不去滑雪基地了改在酒店房间里趁着中午那个例行档期把抖音直播保障开上”</i>），规则按标点切分失效。</li>
+              <li><b>整句向量语义被稀释</b>：30~40 字长句包含四五个实体，整句 Embedding 与 4 字锚点（<code>“午间例行”</code>）算余弦相似度会被拉低至阈值以下。</li>
+              <li><b>否定词误伤全局</b>：前半句“不去滑雪基地”若不精确定界，会误伤后半句的正常意图。</li>
+            </ul>
+          </div>
+          <div class="border border-[var(--border)] rounded-lg p-4 space-y-2">
+            <div class="font-bold text-sm text-[var(--foreground)]">短窗口向量匹配 + 轻量解析方案</div>
+            <ul class="list-disc list-inside space-y-1 text-[var(--muted-foreground)]">
+              <li><b>6~10 字滑窗 + Max-Pooling</b>：因为库内短语锚点长度均为 4~10 字，用长度 8~10 字、步长 4 字的滑窗切分长句（约 6~8 个短窗口，单 Batch 一次算完），每个锚点取所有窗口的最大余弦相似度。</li>
+              <li><b>窗口级局部否定隔离</b>：哪个滑窗命中了锚点，仅检查该滑窗内部及前 2~3 字是否含否定词（<code>不/别/取消</code>），只淘汰被否定的窗口锚点。</li>
+              <li><b>时间解析“快路 + LLM 兜底”</b>：常规词（<code>昨天/上周/上个月</code>）走 0ms 日期算术；非常规口语（如“九月中旬那会儿”）由模型转为 <code>date_range</code> 后再跑 SQL <code>SELECT</code>。</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Example Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse border border-[var(--border)]">
+            <thead>
+              <tr class="bg-[var(--secondary)] text-left">
+                <th class="border border-[var(--border)] p-2.5">滑窗序号</th>
+                <th class="border border-[var(--border)] p-2.5">截取的 8~10 字原话窗口</th>
+                <th class="border border-[var(--border)] p-2.5">命中的库内锚点与最高余弦分</th>
+                <th class="border border-[var(--border)] p-2.5">窗口局部正负判定与解锁动作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5">窗口 #1</td>
+                <td class="border border-[var(--border)] p-2.5"><code>今天我不去滑雪基地了</code></td>
+                <td class="border border-[var(--border)] p-2.5"><code>露天高山滑雪训练基地</code> (0.83)</td>
+                <td class="border border-[var(--border)] p-2.5 text-red-600 font-semibold">含“不去” &rarr; 局部否定淘汰，不污染后续窗口</td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5">窗口 #3</td>
+                <td class="border border-[var(--border)] p-2.5"><code>了改在酒店房间里趁着</code></td>
+                <td class="border border-[var(--border)] p-2.5"><code>外勤驻地酒店</code> (0.85)</td>
+                <td class="border border-[var(--border)] p-2.5 text-green-600 font-semibold">肯定 &rarr; 解锁 <code>scene = '外勤驻地酒店'</code></td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5">窗口 #5</td>
+                <td class="border border-[var(--border)] p-2.5"><code>趁着中午那个例行档期</code></td>
+                <td class="border border-[var(--border)] p-2.5"><code>午间例行</code> (0.89)</td>
+                <td class="border border-[var(--border)] p-2.5 text-green-600 font-semibold">肯定 &rarr; 解锁 <code>time_window = '12:30-13:30'</code></td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5">窗口 #7</td>
+                <td class="border border-[var(--border)] p-2.5"><code>期把抖音开直播保障开上</code></td>
+                <td class="border border-[var(--border)] p-2.5"><code>开直播</code> (0.91)</td>
+                <td class="border border-[var(--border)] p-2.5 text-green-600 font-semibold">肯定 &rarr; 解锁 <code>app = '抖音', biz = 'openlive'</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 4: Evaluation Baseline -->
+    <div id="sec-eval" class="sec-panel hidden space-y-4">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-5 shadow-sm space-y-4">
+        <h2 class="text-base font-bold text-[var(--foreground)]">四、首轮端到端评测基线汇总（cognitive_samples 90 会话 / 186 轮）</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+          <div class="border border-[var(--border)] rounded-lg p-3">
+            <div class="text-xs text-[var(--muted-foreground)]">总体 Session JGA</div>
+            <div class="text-lg font-bold mt-1">84 / 90 (93.33%)</div>
+            <div class="text-xs text-[var(--muted-foreground)]">Turn JGA: 177 / 186 (95.16%)</div>
+          </div>
+          <div class="border border-[var(--border)] rounded-lg p-3">
+            <div class="text-xs text-blue-600 font-semibold">事实记忆 (factual)</div>
+            <div class="text-lg font-bold mt-1">48 / 48 (100.0%)</div>
+            <div class="text-xs text-[var(--muted-foreground)]">Turn JGA: 97 / 97 (100.0%)</div>
+          </div>
+          <div class="border border-[var(--border)] rounded-lg p-3">
+            <div class="text-xs text-amber-600 font-semibold">工作记忆 (working)</div>
+            <div class="text-lg font-bold mt-1">19 / 22 (86.4%)</div>
+            <div class="text-xs text-[var(--muted-foreground)]">Turn JGA: 43 / 49 (87.8%)</div>
+          </div>
+          <div class="border border-[var(--border)] rounded-lg p-3">
+            <div class="text-xs text-purple-600 font-semibold">经验记忆 (experiential)</div>
+            <div class="text-lg font-bold mt-1">17 / 20 (85.0%)</div>
+            <div class="text-xs text-[var(--muted-foreground)]">Turn JGA: 37 / 40 (92.5%)</div>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse border border-[var(--border)]">
+            <thead>
+              <tr class="bg-[var(--secondary)] text-left">
+                <th class="border border-[var(--border)] p-2.5 w-44">未通过样本</th>
+                <th class="border border-[var(--border)] p-2.5 w-44">所属层级与类别</th>
+                <th class="border border-[var(--border)] p-2.5">首轮归因说明与对应改进点</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5"><code>S-USER_005-13</code></td>
+                <td class="border border-[var(--border)] p-2.5">工作记忆 · 预约改期</td>
+                <td class="border border-[var(--border)] p-2.5">前序临时改参会话（<code>S-USER_005-09</code>, 720p/30ms）被追加进 <code>working_record</code>；通过按“昨天预约”卡日期窗口 &Delta;&isin;[1,3]天 + 过滤临时改参单即可消除。</td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5"><code>S-USER_001-13</code>, <code>S-USER_005-14</code></td>
+                <td class="border border-[var(--border)] p-2.5">工作记忆 · 预约改期</td>
+                <td class="border border-[var(--border)] p-2.5">历史工单时段为 <code>12:30-13:30</code> / <code>08:30-10:30</code>，模型按“推迟/提前1小时”做了算术加减，而数据集 GT 将原时间直接标为改期后目标值。</td>
+              </tr>
+              <tr>
+                <td class="border border-[var(--border)] p-2.5"><code>S-USER_001-05</code>, <code>S-USER_003-05</code>, <code>S-USER_005-05</code></td>
+                <td class="border border-[var(--border)] p-2.5">经验记忆 · 经验归纳</td>
+                <td class="border border-[var(--border)] p-2.5">Turn 2 用户要求“把开始时间提前半小时”，模型更新了 <code>start_timestamp</code>，但数据集 Turn 2 的 <code>slot_updates.params</code> 为空字典 <code>{}</code>（维持 Turn 1 时间）。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function showSection(secId, btn) {
+      document.querySelectorAll('.sec-panel').forEach(el => el.classList.add('hidden'));
+      document.getElementById(secId).classList.remove('hidden');
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.className = 'tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)]';
+      });
+      btn.className = 'tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-[var(--primary)] text-[var(--primary-foreground)]';
+    }
+  </script>
+</body>
+</html>

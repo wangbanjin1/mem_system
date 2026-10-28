@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-3">
+  <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-4 text-xs">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[var(--border)]">
+      <div>
+        <h2 class="text-[var(--foreground)] font-semibold text-base">记忆检索与参数拼装过程（样本：USER_001 / mobile_persona_001）</h2>
+        <p class="text-[var(--muted-foreground)] text-xs mt-0.5">
+          正交不重叠三步闭环：① 命中 <code class="font-mono">MEM_7EE9 (expression)</code> 只拿到时间 <code class="font-mono">12:30-13:30</code> → ② 拿时间比对 <code class="font-mono">MEM_09DF (periodic_preference)</code> 拿到 <code class="font-mono">app=抖音, biz=openlive</code> → ③ 拿 <code class="font-mono">抖音|openlive</code> 执行 <code class="font-mono">SQL SELECT</code> 捞出 <code class="font-mono">MEM_9826</code> 拿到 <code class="font-mono">1080p / 50ms</code>
+        </p>
+      </div>
+    </div>
+
+    <!-- Timeline Bar -->
+    <div class="flex items-center gap-1.5 overflow-x-auto pb-1">
+      <button onclick="stepDelta(-1)" class="px-2 py-1 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)] text-xs font-semibold shrink-0 hover:opacity-80">◀ 上一场</button>
+      <div id="case-btns" class="flex items-center gap-1 flex-wrap"></div>
+      <button onclick="stepDelta(1)" class="px-2 py-1 rounded bg-[var(--secondary)] text-[var(--secondary-foreground)] text-xs font-semibold shrink-0 hover:opacity-80">下一场 ▶</button>
+    </div>
+
+    <!-- Current Session Query Banner -->
+    <div class="p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] space-y-1.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span id="case-title" class="font-bold text-sm text-[var(--primary)]"></span>
+        <span id="case-time" class="font-mono text-[var(--muted-foreground)]"></span>
+      </div>
+      <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)] space-y-1">
+        <div><span class="font-bold text-[var(--primary)]">[Turn 1 用户输入 Query]：</span><span id="case-query" class="font-semibold text-sm"></span></div>
+        <div class="text-[var(--muted-foreground)]"><span class="font-semibold text-[var(--foreground)]">[Turn 1 客服响应]：</span><span id="case-reply"></span></div>
+      </div>
+    </div>
+
+    <!-- 3-STEP FLOWCHART PANEL -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
+      <!-- STEP 1 (4 cols) -->
+      <div class="lg:col-span-4 p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] flex flex-col justify-between space-y-2">
+        <div class="space-y-2">
+          <div class="font-bold text-sm text-[var(--primary)] border-b border-[var(--border)] pb-1.5">
+            【第 1 步：向量算余弦（找跳板行）】
+          </div>
+          <div class="text-[var(--muted-foreground)] leading-relaxed whitespace-pre-line" id="step1-desc"></div>
+          <div id="step1-hits" class="space-y-1.5 pt-1"></div>
+        </div>
+        <div class="text-xs font-mono text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+          对应代码：index.search_vector() + _adsorb_slots_from_vector_hits()
+        </div>
+      </div>
+
+      <!-- STEP 2 (4 cols) -->
+      <div class="lg:col-span-4 p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] flex flex-col justify-between space-y-2">
+        <div class="space-y-2">
+          <div class="font-bold text-sm text-[var(--primary)] border-b border-[var(--border)] pb-1.5">
+            【第 2 步：从跳板行读出时间，再去周期行二跳换取 App 与业务！】
+          </div>
+          <div class="text-[var(--muted-foreground)] leading-relaxed whitespace-pre-line" id="step2-desc"></div>
+          <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)] space-y-1">
+            <div class="font-semibold text-[var(--muted-foreground)]">两跳依次解锁的左边槽位列：</div>
+            <div id="step2-unlocked" class="flex flex-wrap gap-1.5 font-mono pt-0.5"></div>
+          </div>
+          <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)] space-y-1">
+            <div class="font-semibold text-[var(--muted-foreground)]">二跳关联推导链：</div>
+            <div id="step2-hop2" class="font-mono text-[var(--foreground)]"></div>
+          </div>
+        </div>
+        <div class="text-xs font-mono text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+          对应代码：list_active_slot_rows() 一跳取时间 → 二跳取 app/biz
+        </div>
+      </div>
+
+      <!-- STEP 3 (4 cols) -->
+      <div class="lg:col-span-4 p-3 rounded-lg bg-[var(--background)] border-2 border-[var(--primary)] flex flex-col justify-between space-y-2">
+        <div class="space-y-2">
+          <div class="font-bold text-sm text-[var(--primary)] border-b border-[var(--border)] pb-1.5">
+            【第 3 步：拿着 (app, biz) 回头执行 SQL SELECT 捞出剩余参数！】
+          </div>
+          <pre id="step3-sql" class="p-2 rounded bg-[var(--card)] border border-[var(--border)] font-mono text-xs overflow-x-auto whitespace-pre-wrap"></pre>
+          <div id="step3-rescued" class="p-2 rounded bg-[var(--card)] border border-[var(--border)] font-semibold text-[var(--primary)] leading-relaxed"></div>
+          <div class="p-2 rounded bg-[var(--card)] border border-[var(--border)] space-y-1">
+            <div class="font-semibold text-[var(--muted-foreground)]">三行各司其职拼装出的完整配置：</div>
+            <div id="step3-assembled" class="flex flex-wrap gap-1.5 font-mono pt-0.5"></div>
+          </div>
+        </div>
+        <div class="text-xs font-mono text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
+          对应代码：index.select_by_slots()
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE SQLITE VECTOR TABLE PANEL -->
+    <div class="p-3 rounded-lg bg-[var(--background)] border border-[var(--border)] space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="font-bold text-sm text-[var(--primary)]">
+          同一张 SQLite <code class="font-mono">vector</code> 表实时状态（注意看左边 6 列：每行只填自己负责的列，互不重复！）
+        </div>
+        <div class="flex items-center gap-2 text-xs">
+          <span class="px-2 py-0.5 rounded bg-[var(--secondary)] font-semibold">🎯 第1跳：词条行（只提供时间/画质指代）</span>
+          <span class="px-2 py-0.5 rounded bg-[var(--secondary)] font-semibold">🔗 第2跳：周期/路由行（只提供 app + biz）</span>
+          <span class="px-2 py-0.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-semibold">✅ 第3步 SQL 捞出：参数卡（提供 1080p + 50ms）</span>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded border border-[var(--border)]">
+        <table class="w-full text-left border-collapse font-mono text-xs">
+          <thead>
+            <tr class="bg-[var(--secondary)] text-[var(--secondary-foreground)] border-b border-[var(--border)]">
+              <th class="p-2">memory_id / 正交职责</th>
+              <th class="p-2 border-l border-[var(--border)]">左边列1: app_col</th>
+              <th class="p-2">左边列2: biz_col</th>
+              <th class="p-2">左边列3: scene_col</th>
+              <th class="p-2">左边列4: time_window_col</th>
+              <th class="p-2">左边列5: alias_col</th>
+              <th class="p-2 border-r border-[var(--border)]">左边列6: target_col</th>
+              <th class="p-2">右边列: embedding_json (向量文本及净荷)</th>
+              <th class="p-2 border-l border-[var(--border)]">【第1步】<br/>vector_sim</th>
+              <th class="p-2">【第2步】<br/>该行在检索链中的分工</th>
+              <th class="p-2">【第3步】<br/>SQL select_sim</th>
+              <th class="p-2">FinalScore</th>
+            </tr>
+          </thead>
+          <tbody id="sqlite-live-tbody" class="divide-y divide-[var(--border)]"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SESSIONS = [{"sid": "S-USER_001-01", "short": "S-01 (建联)", "time": "2026-10-10 12:15", "title": "主线首次建联（此时 SQLite 表为空 → 0 命中 → 会话结束后正交拆成 3 行落盘）", "query": "你好，需要给抖音开直播做一个网络保障，时间是今天12时30分开始。（Turn 2 补充：1080p、50ms、午间例行=12:30-13:30）", "agent_reply": "收到，您是要在抖音开直播对吧？请确认一下画质、时延和持续时长。（会话结束后拆为 3 行互不重叠的记忆：MEM_7EE9 只存时间词条、MEM_09DF 只存时间->软件业务、MEM_9826 只存软件业务->画质时延）", "step1": {"desc": "首场会话 Turn 1 时，SQLite vector 表中尚无任何历史行（0 行）。", "hits": []}, "step2": {"desc": "无跳板行命中，仅从用户原话提取出显式槽位：app='抖音', biz='openlive', time_window='12:30'。", "unlocked": ["(无历史跳板行可读)"], "hop2": "表中尚无历史记录可供二跳"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';\n-- 结果：0 行（当前表为空，会话结束后正交落盘 3 行）", "rescued": "本场为首次建联，检索返回空；会话结束后按正交不重叠原则写入 MEM_7EE9、MEM_09DF、MEM_9826 三行。", "assembled": {"application": "抖音", "business": "openlive", "待追问补全": "1080p / 50ms / 12:30-13:30"}}, "table_rows": []}, {"sid": "S-USER_001-02", "short": "S-02 (支线建联)", "time": "2026-10-11 18:30", "title": "支线1首次建联（表中仅有主线 3 行 → SQL 按腾讯会议严格过滤 → 0 误捞）", "query": "在大巴转场途中网络不太稳，帮我给腾讯会议开个保障，时间从今天18时45分开始。（Turn 2/3 补充：保个基本画质=720p，100ms）", "agent_reply": "收到，已确认是腾讯会议保障。请问画质、时延和持续时长有什么具体要求？（会话结束后写入支线 MEM_FA29、MEM_DE73、MEM_8B49）", "step1": {"desc": "拿 Query 向量 v_q 与表中已有的 3 行主线记录算余弦：因场景和业务不同，余弦均低于跳板阈值（最高 0.24）。", "hits": []}, "step2": {"desc": "无跳板行命中；从原话提取显式槽位：app='腾讯会议', biz='meeting', scene='大巴转场途中'。", "unlocked": ["app_col = '腾讯会议'", "biz_col = 'meeting'", "scene_col = '大巴转场途中'"], "hop2": "表中尚无 18:45 或 腾讯会议 的周期行"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '腾讯会议'\n  AND biz_col = 'meeting';\n-- 结果：0 行（表中仅有抖音行，被 WHERE 条件过滤）", "rescued": "SQL WHERE 条件严格隔离了已有的主线抖音记忆（select_sim = 0.00），防止跨应用串台。", "assembled": {"scene": "大巴转场途中", "application": "腾讯会议", "business": "meeting", "待追问补全": "720p / 100ms / 18:45-19:45"}}, "table_rows": [{"id": "MEM_7EE9", "sub": "expression (只存词条->时间)", "app": "-", "biz": "-", "scene": "-", "tw": "-", "alias": "午间例行", "target": "12:30-13:30", "vec": "午间例行 -> 12:30-13:30", "v_sim": 0.21, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_09DF", "sub": "periodic_preference (只存时间->软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.24, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_9826", "sub": "preferred_value (只存软件业务->画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.19, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-03", "short": "S-03 (主线复用)", "time": "2026-10-12 12:15", "title": "主线首次复用：MEM_7EE9 拿时间(12:30-13:30) → MEM_09DF 拿软件业务(抖音|openlive) → SQL SELECT 捞 MEM_9826 拿参数(1080p/50ms)", "query": "老规矩，在常规周期保障现场，按‘午间例行’的时间，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "拿 Query 向量 v_q 与 SQLite 表中所有行的 embedding_json 算余弦相似度：命中词条跳板行 MEM_7EE9（expression: 午间例行, vector_sim = 0.76）。注意：MEM_7EE9 这一行只存了 alias_col='午间例行' 和 target_col='12:30-13:30'，它的 app_col 和 biz_col 是空的（-）！", "hits": ["➔ 命中跳板行 MEM_7EE9 (subtype='expression', alias_col='午间例行', vector_sim = 0.76)"]}, "step2": {"desc": "① 第一跳（从 MEM_7EE9 拿时间）：从 MEM_7EE9 左边列只读出 target_col = '12:30-13:30'（此时还不知道软件和业务！）。\n② 第二跳（拿时间去 MEM_09DF 换软件和业务）：拿着刚拿到的 '12:30-13:30' 去比对 periodic_preference 行 MEM_09DF 的 time_window_col，才从 MEM_09DF 左边列读出 app_col = '抖音', biz_col = 'openlive'（但 MEM_09DF 里没有画质和时延参数！）。", "unlocked": ["第1跳(MEM_7EE9)只拿到时间: target_col = '12:30-13:30'", "第2跳(MEM_09DF)拿到软件业务: app_col = '抖音', biz_col = 'openlive'"], "hop2": "target_col='12:30-13:30' ➔ 匹配 MEM_09DF.time_window_col='12:30-13:30' ➔ 解锁 app_col='抖音', biz_col='openlive'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "➔ 拿着第 2 步刚解锁出的 (app='抖音', biz='openlive') 回头对表执行 SQL SELECT，瞬间把刚才向量余弦只有 0.35 的参数卡 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】 以 select_sim = 0.98 精确捞出，补齐剩余的画质(1080p)与时延(50ms)参数！", "assembled": {"time_window": "12:30-13:30 (来自第1跳 MEM_7EE9)", "application": "抖音 (来自第2跳 MEM_09DF)", "business": "openlive (来自第2跳 MEM_09DF)", "resolution": "1080p (来自第3步 SQL 捞出 MEM_9826)", "latency": "50ms (来自第3步 SQL 捞出 MEM_9826)"}}, "table_rows": [{"id": "MEM_7EE9", "sub": "expression (只存词条->时间)", "app": "-", "biz": "-", "scene": "-", "tw": "-", "alias": "午间例行", "target": "12:30-13:30", "vec": "午间例行 -> 12:30-13:30", "v_sim": 0.76, "step2_role": "① 第1跳：只从左边 target_col 拿到时间 '12:30-13:30'（无 app/biz）", "s_sim": 0.88, "final": 0.8464, "tag": "step1"}, {"id": "MEM_09DF", "sub": "periodic_preference (只存时间->软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.42, "step2_role": "② 第2跳：凭 tw='12:30-13:30' 匹配此行，拿到 app='抖音', biz='openlive'（无画质/时延）", "s_sim": 0.96, "final": 0.8786, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (只存软件业务->画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.35, "step2_role": "③ 第3步：凭 WHERE app='抖音' AND biz='openlive' 捞出此卡，拿到 1080p / 50ms", "s_sim": 0.98, "final": 0.8924, "tag": "step3"}, {"id": "MEM_8B49", "sub": "scene_preference", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.18, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_DE73", "sub": "periodic_preference", "app": "腾讯会议", "biz": "meeting", "scene": "-", "tw": "18:45-19:45", "alias": "-", "target": "-", "vec": "18:45-19:45 -> 腾讯会议:meeting", "v_sim": 0.15, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_FA29", "sub": "expression", "app": "-", "biz": "-", "scene": "大巴转场途中", "tw": "-", "alias": "保个基本画质", "target": "720p", "vec": "保个基本画质 -> 720p", "v_sim": 0.16, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-04", "short": "S-04 (域外拒识)", "time": "2026-10-13 10:00", "title": "域外装维报修诉求（第1步余弦均低于阈值 + 第2步无槽位解锁 → 第3步不触发 SQL）", "query": "你好，现场这边网络好像有问题，能帮我安排师傅处理一下宽带光纤装维报修吗？", "agent_reply": "抱歉，本智能助手仅提供手机移动网络加速与保障服务，暂不支持办理宽带光纤装维报修业务，建议您联系宽带专线处理。", "step1": {"desc": "拿 Query 向量与表中 7 行记忆算余弦：最高仅 0.19（低于跳板阈值 0.36），无跳板行命中。", "hits": []}, "step2": {"desc": "无跳板行可读，且原话无有效应用/业务槽位。", "unlocked": [], "hop2": "无槽位可触发二跳"}, "step3": {"sql": "-- app_col 与 biz_col 均为空，不执行 select_by_slots 查询", "rescued": "0 行被捞出，客服直接按域外业务拒识。", "assembled": {"识别结果": "域外诉求（0 命中）"}}, "table_rows": [{"id": "MEM_7EE9", "sub": "expression (只存词条->时间)", "app": "-", "biz": "-", "scene": "-", "tw": "-", "alias": "午间例行", "target": "12:30-13:30", "vec": "午间例行 -> 12:30-13:30", "v_sim": 0.14, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_09DF", "sub": "periodic_preference (只存时间->软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.16, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_9826", "sub": "preferred_value (只存软件业务->画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.19, "step2_role": "-", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-05", "short": "S-05 (支线复用)", "time": "2026-10-14 18:30", "title": "支线1首次复用：MEM_FA29 拿画质(720p)+场景 → MEM_DE73 拿时段(18:45-19:45) → SQL 捞 MEM_8B49 拿时延(100ms)", "query": "老规矩，在大巴转场途中，用腾讯会议做会议，画质按‘保个基本画质’，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的腾讯会议会议配置：720p、时延100ms以内，18时45分开始、19时45分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "拿 Query 向量 v_q 与表中所有行算余弦：命中跳板行 MEM_FA29（expression: 保个基本画质, vector_sim = 0.78）。", "hits": ["➔ 命中跳板行 MEM_FA29 (subtype='expression', alias_col='保个基本画质', vector_sim = 0.78)"]}, "step2": {"desc": "① 第一跳（从 MEM_FA29 拿画质与场景）：读出 target_col='720p', scene_col='大巴转场途中'；\n② 第二跳（从 MEM_DE73 拿起止时段）：拿着 (app='腾讯会议', biz='meeting') 比对周期行 MEM_DE73，从左边列读出 time_window_col='18:45-19:45'。", "unlocked": ["第1跳(MEM_FA29): target_col='720p', scene_col='大巴转场途中'", "第2跳(MEM_DE73): time_window_col='18:45-19:45'"], "hop2": "拿着 (腾讯会议, meeting) 比对 MEM_DE73 ➔ 解锁 time_window_col='18:45-19:45'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '腾讯会议'\n  AND biz_col = 'meeting'\n  AND scene_col = '大巴转场途中';", "rescued": "➔ 精准捞出支线场景参数卡 【MEM_8B49 (大巴转场途中 | 腾讯会议 | meeting: 720p, 100ms)】（select_sim = 0.98），补齐剩余的时延参数（100ms）！", "assembled": {"scene": "大巴转场途中", "application": "腾讯会议", "business": "meeting", "time_window": "18:45-19:45 (来自第2跳 MEM_DE73)", "resolution": "720p (来自第1跳 MEM_FA29)", "latency": "100ms (来自第3步 SQL 捞出 MEM_8B49)"}}, "table_rows": [{"id": "MEM_FA29", "sub": "expression (只存词条->画质)", "app": "-", "biz": "-", "scene": "大巴转场途中", "tw": "-", "alias": "保个基本画质", "target": "720p", "vec": "保个基本画质 大巴转场途中 -> 720p", "v_sim": 0.78, "step2_role": "① 第1跳：读出 target_col='720p', scene_col='大巴转场途中'", "s_sim": 0.88, "final": 0.8449, "tag": "step1"}, {"id": "MEM_DE73", "sub": "periodic_preference (只存时间<->软件业务)", "app": "腾讯会议", "biz": "meeting", "scene": "-", "tw": "18:45-19:45", "alias": "-", "target": "-", "vec": "18:45-19:45 -> 腾讯会议:meeting", "v_sim": 0.5, "step2_role": "② 第2跳：凭 腾讯会议|meeting 反查此行，拿到 tw='18:45-19:45'", "s_sim": 0.96, "final": 0.8732, "tag": "step2"}, {"id": "MEM_8B49", "sub": "scene_preference (只存场景参数)", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.79, "step2_role": "③ 第3步：WHERE app+biz+scene 全匹配捞出，补齐 latency=100ms", "s_sim": 0.98, "final": 0.8832, "tag": "step3"}, {"id": "MEM_9826", "sub": "preferred_value", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.2, "step2_role": "app_col='抖音' 不匹配 WHERE 条件，被过滤", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-06", "short": "S-06 (省略时段)", "time": "2026-10-15 12:15", "title": "主线省略时段复用：只说「用抖音开直播」→ 二跳查 MEM_09DF 拿时间(12:30-13:30) → SQL 捞 MEM_9826 拿画质时延", "query": "今天在常规周期保障现场，老规矩，用抖音做开直播，帮我把保障开上。", "agent_reply": "收到，您是要在抖音开直播，按老规矩来对吧？我这边调取一下您的长期配置：画质1080p、时延50ms以内、时长60分钟，从12:30开始。确认一下，是按这个开通吗？", "step1": {"desc": "用户本场没说「午间例行」也没说几点开始，只说了「用抖音做开直播」。", "hits": ["命中周期跳板行 MEM_09DF (12:30-13:30 | 抖音:openlive, vector_sim = 0.56)"]}, "step2": {"desc": "拿着 (app='抖音', biz='openlive') 去比对 periodic_preference 行 MEM_09DF，从它左边的列里读出该业务绑定的固定时间段：time_window_col = '12:30-13:30'。", "unlocked": ["app_col = '抖音'", "biz_col = 'openlive'", "二跳从 MEM_09DF 读出: time_window_col = '12:30-13:30'"], "hop2": "periodic_preference[app='抖音', biz='openlive'] ➔ 反向读出左边列 time_window_col = '12:30-13:30'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "捞出参数卡 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】（select_sim = 0.98，提供 1080p/50ms）与周期卡 【MEM_09DF】（select_sim = 0.96，提供 12:30-13:30）。", "assembled": {"application": "抖音", "business": "openlive", "time_window": "12:30-13:30 (来自 MEM_09DF)", "resolution": "1080p (来自 MEM_9826)", "latency": "50ms (来自 MEM_9826)"}}, "table_rows": [{"id": "MEM_09DF", "sub": "periodic_preference (只存时间<->软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.56, "step2_role": "第2步：凭 抖音|openlive 匹配此行，从左边列读出 tw='12:30-13:30'", "s_sim": 0.96, "final": 0.9005, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (只存软件业务->画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.49, "step2_role": "第3步：WHERE app='抖音' AND biz='openlive' 捞出 1080p / 50ms", "s_sim": 0.98, "final": 0.9136, "tag": "step3"}]}, {"sid": "S-USER_001-07", "short": "S-07 (主线强化)", "time": "2026-10-16 12:15", "title": "主线常规复用（验证 S-06 单次延长未污染 MEM_09DF 的 12:30-13:30 槽位列）", "query": "老规矩，在常规周期保障现场，按‘午间例行’的时间，用抖音做开直播，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "第 1 步算余弦命中跳板行 MEM_7EE9（午间例行, vector_sim = 0.69）。", "hits": ["命中跳板行 MEM_7EE9 (alias_col='午间例行', vector_sim = 0.69)"]}, "step2": {"desc": "① 从 MEM_7EE9 读出 target_col='12:30-13:30'；\n② 比对 MEM_09DF 确认 time_window_col='12:30-13:30' 对应 app_col='抖音', biz_col='openlive'。", "unlocked": ["第1跳(MEM_7EE9): target_col = '12:30-13:30'", "第2跳(MEM_09DF): app_col = '抖音', biz_col = 'openlive'"], "hop2": "MEM_09DF.time_window_col 保持 12:30-13:30 完好无损"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "精确捞出 【MEM_9826 (1080p, 50ms)】（select_sim = 0.98, FinalScore 因 3 票强化升至 0.9267）。", "assembled": {"time_window": "12:30-13:30 (MEM_7EE9)", "application": "抖音 (MEM_09DF)", "business": "openlive (MEM_09DF)", "resolution": "1080p (MEM_9826)", "latency": "50ms (MEM_9826)"}}, "table_rows": [{"id": "MEM_7EE9", "sub": "expression (只存词条->时间)", "app": "-", "biz": "-", "scene": "-", "tw": "-", "alias": "午间例行", "target": "12:30-13:30", "vec": "午间例行 -> 12:30-13:30", "v_sim": 0.69, "step2_role": "① 第1跳：拿到 target_col='12:30-13:30'", "s_sim": 0.88, "final": 0.8387, "tag": "step1"}, {"id": "MEM_09DF", "sub": "periodic_preference (只存时间->软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.65, "step2_role": "② 第2跳：凭 12:30-13:30 拿到 app='抖音', biz='openlive'", "s_sim": 0.96, "final": 0.9158, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (只存软件业务->画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.47, "step2_role": "③ 第3步：SQL SELECT 捞出 1080p / 50ms", "s_sim": 0.98, "final": 0.9267, "tag": "step3"}]}, {"sid": "S-USER_001-08", "short": "S-08 (快手隔离)", "time": "2026-10-17 12:30", "title": "周末午休快手短视频单次请求（显式 app=快手 阻止跳向 12:30-13:30 抖音行）", "query": "周末午休12点30分到13点30分，用快手刷短视频，画质720p，时延控制在80ms以内，保障开60分钟。", "agent_reply": "收到，快手短视频保障已为您受理：画质720p、时延80ms以内、时长60分钟，从12:30到13:30。（会话结束后记入 candidate 候选行 MEM_FF21）", "step1": {"desc": "虽然用户提到了 12:30-13:30，但明确指定了 app='快手', biz='video'。", "hits": []}, "step2": {"desc": "显式应用作用域守卫（explicit_apps={'快手'}）拦截了 MEM_09DF（app_col='抖音'），防止把 12:30-13:30 跳向抖音直播。", "unlocked": ["app_col = '快手'", "biz_col = 'video'", "scene_col = '周末午休'"], "hop2": "显式指定快手，禁止触发 MEM_09DF (抖音) 的二跳"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '快手'\n  AND biz_col = 'video';\n-- 结果：0 行（不误捞抖音直播参数卡 MEM_9826）", "rescued": "0 行历史记忆被误捞，直接按当场显式参数（720p/80ms）办理。", "assembled": {"scene": "周末午休", "application": "快手", "business": "video", "resolution": "720p (当场指定)", "latency": "80ms (当场指定)"}}, "table_rows": [{"id": "MEM_09DF", "sub": "periodic_preference", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.41, "step2_role": "被显式应用守卫 (app=快手 != 抖音) 拦截，不触发二跳", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_9826", "sub": "preferred_value", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.22, "step2_role": "WHERE app_col='快手' 不匹配，被过滤", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-09", "short": "S-09 (现场临时改参)", "time": "2026-10-18 12:15", "title": "特殊活动现场检索（SQL 过滤 S-08 快手候选行 → 捞出 MEM_9826 基线 1080p/50ms）", "query": "今天在公益赛事活动现场，老规矩，用抖音做开直播，帮我把保障开上。（Turn 2 临时改 720p/30ms 被门控拦截）", "agent_reply": "收到，您是要在抖音开直播，按老规矩来对吧？我调取您的长期配置：画质1080p、时延50ms以内、时长60分钟，从12:30到13:30。确认一下，是按这个开通吗？", "step1": {"desc": "第 1 步算余弦命中周期跳板行 MEM_09DF (vector_sim = 0.51)。", "hits": ["命中跳板行 MEM_09DF (12:30-13:30 | 抖音:openlive, vector_sim = 0.51)"]}, "step2": {"desc": "从 MEM_09DF 左边列读出 time_window_col='12:30-13:30'。", "unlocked": ["app_col = '抖音'", "biz_col = 'openlive'", "time_window_col = '12:30-13:30'"], "hop2": "periodic_preference[抖音|openlive] ➔ 补全 time_window_col = '12:30-13:30'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "精确捞出 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】（select_sim = 0.98），S-08 写入的快手候选行 MEM_FF21 因 app_col='快手' 被完全过滤。", "assembled": {"application": "抖音", "business": "openlive", "time_window": "12:30-13:30", "resolution": "1080p", "latency": "50ms"}}, "table_rows": [{"id": "MEM_09DF", "sub": "periodic_preference", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.51, "step2_role": "第2步直读左边列: tw=12:30-13:30", "s_sim": 0.96, "final": 0.9144, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.52, "step2_role": "第3步 SQL SELECT 精确捞出 (select_sim=0.98)", "s_sim": 0.98, "final": 0.926, "tag": "step3"}, {"id": "MEM_FF21", "sub": "scene_preference (candidate)", "app": "快手", "biz": "video", "scene": "周末午休", "tw": "-", "alias": "-", "target": "-", "vec": "周末午休 快手 短视频: 720p, 80ms", "v_sim": 0.21, "step2_role": "app_col='快手' 不匹配 WHERE 条件，被过滤", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-10", "short": "S-10 (次日恢复)", "time": "2026-10-19 12:15", "title": "临时覆写后次日恢复检索（验证 MEM_9826 依然保持 1080p/50ms，未被 S-09 临时改参污染）", "query": "老规矩，在公益赛事活动现场，用抖音做开直播，画质按‘高画质不模糊’，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "第 1 步命中周期跳板行 MEM_09DF (vector_sim = 0.50)。", "hits": ["命中跳板行 MEM_09DF (12:30-13:30 | 抖音:openlive, vector_sim = 0.50)"]}, "step2": {"desc": "从左边列解锁 app_col='抖音', biz_col='openlive', time_window_col='12:30-13:30'。", "unlocked": ["app_col = '抖音'", "biz_col = 'openlive'", "time_window_col = '12:30-13:30'"], "hop2": "periodic_preference[抖音|openlive] ➔ time_window_col = '12:30-13:30'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "捞出 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】（select_sim = 0.98），验证 S-09 的单次 720p/30ms 临时调整未污染基线参数卡。", "assembled": {"application": "抖音", "business": "openlive", "time_window": "12:30-13:30", "resolution": "1080p", "latency": "50ms"}}, "table_rows": [{"id": "MEM_09DF", "sub": "periodic_preference", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.5, "step2_role": "第2步直读左边列: tw=12:30-13:30", "s_sim": 0.96, "final": 0.8944, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.51, "step2_role": "第3步 SQL SELECT 捞出 (保持 1080p/50ms)", "s_sim": 0.98, "final": 0.9067, "tag": "step3"}]}, {"sid": "S-USER_001-11", "short": "S-11 (支线二次复用)", "time": "2026-10-20 18:30", "title": "支线1二次独立复用：MEM_FA29 拿 720p → MEM_DE73 拿 18:45-19:45 → SQL 捞 MEM_8B49 拿 100ms", "query": "老规矩，在大巴转场途中，用腾讯会议做会议，画质按‘保个基本画质’，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的腾讯会议会议配置：720p、时延100ms以内，18时45分开始、19时45分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "第 1 步算余弦命中跳板行 MEM_FA29（保个基本画质, vector_sim = 0.78）。", "hits": ["命中跳板行 MEM_FA29 (alias_col='保个基本画质', vector_sim = 0.78)"]}, "step2": {"desc": "从 MEM_FA29 左边列读出 target_col='720p', scene_col='大巴转场途中'，并经 MEM_DE73 补出 time_window_col='18:45-19:45'。", "unlocked": ["target_col = '720p'", "scene_col = '大巴转场途中'", "time_window_col = '18:45-19:45'"], "hop2": "比对 MEM_DE73 ➔ 解锁 time_window_col = '18:45-19:45'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '腾讯会议'\n  AND biz_col = 'meeting'\n  AND scene_col = '大巴转场途中';", "rescued": "即便此时主线抖音已累积 5 票高热度，SQL WHERE 条件依然精准捞出支线 【MEM_8B49 (720p, 100ms)】（select_sim = 0.98）与 【MEM_DE73 (18:45-19:45)】（select_sim = 0.96）。", "assembled": {"scene": "大巴转场途中", "application": "腾讯会议", "business": "meeting", "time_window": "18:45-19:45", "resolution": "720p", "latency": "100ms"}}, "table_rows": [{"id": "MEM_FA29", "sub": "expression (只存词条->画质)", "app": "-", "biz": "-", "scene": "大巴转场途中", "tw": "-", "alias": "保个基本画质", "target": "720p", "vec": "保个基本画质 -> 720p", "v_sim": 0.78, "step2_role": "① 第1跳：拿到 target_col='720p', scene_col='大巴转场途中'", "s_sim": 0.88, "final": 0.8501, "tag": "step1"}, {"id": "MEM_DE73", "sub": "periodic_preference (只存时间<->软件业务)", "app": "腾讯会议", "biz": "meeting", "scene": "-", "tw": "18:45-19:45", "alias": "-", "target": "-", "vec": "18:45-19:45 -> 腾讯会议:meeting", "v_sim": 0.5, "step2_role": "② 第2跳：拿到 tw='18:45-19:45'", "s_sim": 0.96, "final": 0.8832, "tag": "step2"}, {"id": "MEM_8B49", "sub": "scene_preference (只存场景参数)", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.79, "step2_role": "③ 第3步：SQL SELECT 精确捞出 (补齐 latency=100ms)", "s_sim": 0.98, "final": 0.8932, "tag": "step3"}]}, {"sid": "S-USER_001-12", "short": "S-12 (钉钉隔离)", "time": "2026-10-21 10:00", "title": "钉钉总结会单次请求（同为 meeting 业务，SQL 按 app_col='钉钉' 严格隔离腾讯会议）", "query": "今天10点，在阶段工作总结会用钉钉开会议，画质720p，时延控制在80ms以内，开30分钟，帮我开通。", "agent_reply": "收到，钉钉会议保障已按720p、80ms以内、30分钟为您开通。（会话结束后记入 candidate 候选行 MEM_C430）", "step1": {"desc": "用户显式指定 app='钉钉', biz='meeting'。", "hits": []}, "step2": {"desc": "显式指定了 app='钉钉'，因此不会触发 MEM_76A4（meeting -> 腾讯会议）的缺省应用补全。", "unlocked": ["app_col = '钉钉'", "biz_col = 'meeting'", "scene_col = '阶段工作总结会'"], "hop2": "已有显式 app='钉钉'，跳过 service_to_app[meeting -> 腾讯会议]"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '钉钉'\n  AND biz_col = 'meeting';\n-- 结果：0 行（腾讯会议 MEM_8B49 因 app_col='腾讯会议' 被过滤）", "rescued": "0 行腾讯会议记忆被误捞，直接按当场指定参数办理。", "assembled": {"scene": "阶段工作总结会", "application": "钉钉", "business": "meeting", "resolution": "720p (当场指定)", "latency": "80ms (当场指定)"}}, "table_rows": [{"id": "MEM_76A4", "sub": "service_to_app", "app": "腾讯会议", "biz": "meeting", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "meeting -> 腾讯会议", "v_sim": 0.38, "step2_role": "因 Query 已显式指定钉钉，不触发该默认绑定", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_8B49", "sub": "scene_preference", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.29, "step2_role": "app_col='腾讯会议' != '钉钉'，被过滤", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-13", "short": "S-13 (主线收官)", "time": "2026-10-22 12:15", "title": "主线收官检索：二跳解锁 12:30-13:30 → SQL 捞出 MEM_9826（5票强化后总分达 0.9275）", "query": "老规矩，在常规周期保障现场，用抖音做开直播，时延按‘别拖沓’，帮我把保障开上。", "agent_reply": "收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？", "step1": {"desc": "第 1 步命中周期跳板行 MEM_09DF (vector_sim = 0.58)。", "hits": ["命中跳板行 MEM_09DF (12:30-13:30 | 抖音:openlive, vector_sim = 0.58)"]}, "step2": {"desc": "从 MEM_09DF 左边列读出 time_window_col='12:30-13:30', app_col='抖音', biz_col='openlive'。", "unlocked": ["app_col = '抖音'", "biz_col = 'openlive'", "time_window_col = '12:30-13:30'"], "hop2": "periodic_preference[抖音|openlive] ➔ time_window_col = '12:30-13:30'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "把 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】 以 select_sim = 0.98 捞出，结合 5 票艾宾浩斯保持率（R=0.9892）与热度（H=0.4165），FinalScore 达到 0.9275。", "assembled": {"application": "抖音", "business": "openlive", "time_window": "12:30-13:30", "resolution": "1080p", "latency": "50ms"}}, "table_rows": [{"id": "MEM_09DF", "sub": "periodic_preference", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.58, "step2_role": "第2步直读左边列: tw=12:30-13:30", "s_sim": 0.96, "final": 0.9153, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.54, "step2_role": "第3步 SQL SELECT 精确捞出 (select_sim=0.98)", "s_sim": 0.98, "final": 0.9275, "tag": "step3"}]}, {"sid": "S-USER_001-14 (核心示例：三行各司其职，一层层顺藤摸瓜)", "short": "★核心示例:跳板捞卡", "time": "2026-10-23 12:15", "title": "零字面重合查询：MEM_7EE9 只拿时间(12:30-13:30) → MEM_09DF 只拿软件业务(抖音|openlive) → SQL SELECT 捞 MEM_9826 拿画质时延(1080p/50ms)", "query": "按白日半晌那场固定功课准备一下网络保障。", "agent_reply": "收到，根据您午间例行（12:30-13:30）的固定安排，已调取抖音开直播配置：1080p、时延50ms以内，持续60min。确认按这套配置开通吗？", "step1": {"desc": "用户嘴里没说「抖音」、没说「直播」、也没说「12:30」。拿 Query 向量 v_q 与表中所有行的 embedding_json 算余弦相似度：命中词条跳板行 MEM_7EE9 (subtype='expression', vector_sim = 0.76)。注意看下方表格：MEM_7EE9 的 app_col 和 biz_col 是空的（-），它只存了「午间例行 -> 12:30-13:30」！", "hits": ["➔ 命中跳板行 MEM_7EE9 (subtype = 'expression', alias_col = '午间例行', vector_sim = 0.76)"]}, "step2": {"desc": "为什么需要两跳？因为三行记忆各管一摊、互不重复：\n① 第 1 跳（读 MEM_7EE9 左边列）：只拿到时间 target_col = '12:30-13:30'（此时还不知道是什么软件和业务！）；\n② 第 2 跳（拿 '12:30-13:30' 去比对 MEM_09DF 的 time_window_col）：匹配上周期行 MEM_09DF，从它左边列读出 app_col = '抖音', biz_col = 'openlive'（但 MEM_09DF 里没有画质和时延参数！）。", "unlocked": ["第1跳(读 MEM_7EE9): target_col = '12:30-13:30'", "第2跳(读 MEM_09DF): app_col = '抖音', biz_col = 'openlive'"], "hop2": "拿着第1跳的 '12:30-13:30' 匹配 MEM_09DF.time_window_col ➔ 才解锁出 app_col='抖音', biz_col='openlive'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "➔ 第 2 跳拿到了 (app='抖音', biz='openlive')，但还缺画质和时延参数！所以第 3 步回头对同一张表执行 SQL SELECT，瞬间把刚才向量余弦只有 0.35 的参数卡 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】 以 select_sim = 0.98 精确捞出，拿到最后的 1080p 和 50ms！", "assembled": {"time_window": "12:30-13:30 (第1跳 MEM_7EE9 提供)", "application": "抖音 (第2跳 MEM_09DF 提供)", "business": "openlive (第2跳 MEM_09DF 提供)", "resolution": "1080p (第3步 SQL 捞出 MEM_9826 提供)", "latency": "50ms (第3步 SQL 捞出 MEM_9826 提供)"}}, "table_rows": [{"id": "MEM_7EE9", "sub": "expression (只管: 词条 -> 时间)", "app": "-", "biz": "-", "scene": "-", "tw": "-", "alias": "午间例行", "target": "12:30-13:30", "vec": "午间例行 12:30-13:30 用户说「午间例行」指代12:30-13:30", "v_sim": 0.76, "step2_role": "① 第1跳命中此行：只从 target_col 读出时间 '12:30-13:30'（此行无 app_col/biz_col）", "s_sim": 0.88, "final": 0.8537, "tag": "step1"}, {"id": "MEM_09DF", "sub": "periodic_preference (只管: 时间 -> 软件业务)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 抖音 openlive 固定时段进行抖音直播", "v_sim": 0.39, "step2_role": "② 第2跳比对此行：凭 time_window_col='12:30-13:30' 读出 app_col='抖音', biz_col='openlive'（此行无画质/时延）", "s_sim": 0.96, "final": 0.9153, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (只管: 软件业务 -> 画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive 默认参数：1080p, 50ms", "v_sim": 0.35, "step2_role": "③ 第3步 SQL SELECT 捞出此行：凭 WHERE app_col='抖音' AND biz_col='openlive' 拿到剩余参数 1080p / 50ms！", "s_sim": 0.98, "final": 0.9275, "tag": "step3"}, {"id": "MEM_8B49", "sub": "scene_preference", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.16, "step2_role": "app_col='腾讯会议' 不匹配 WHERE 条件，被过滤", "s_sim": 0.0, "final": 0.0, "tag": "none"}, {"id": "MEM_FA29", "sub": "expression", "app": "-", "biz": "-", "scene": "大巴转场途中", "tw": "-", "alias": "保个基本画质", "target": "720p", "vec": "保个基本画质 -> 720p", "v_sim": 0.14, "step2_role": "未命中", "s_sim": 0.0, "final": 0.0, "tag": "none"}]}, {"sid": "S-USER_001-15 (扩展验证：只说动作不提软件 -> 二跳捞卡)", "short": "扩展1:缺省软件二跳", "time": "2026-10-24 12:15", "title": "只说动作「上麦开播推流」没提抖音 → 命中跳板行 MEM_03A3(openlive->抖音) → SQL 捞出 MEM_9826", "query": "准备上麦开播推流了，帮我看下默认配置并开通保障。", "agent_reply": "收到，根据您开直播默认使用抖音的习惯，已调取配置：1080p、时延50ms以内，12:30至13:30（60min）。确认按这套配置开通吗？", "step1": {"desc": "拿 Query 向量与业务原型向量 PROTO_OPENLIVE 及表中行算余弦：识别出 biz='openlive' (cos=0.86) 并命中路由跳板行 MEM_03A3 (service_to_app, vector_sim = 0.61)。", "hits": ["➔ 命中业务原型 PROTO_OPENLIVE (cos = 0.86) 与路由跳板行 MEM_03A3 (vector_sim = 0.61)"]}, "step2": {"desc": "拿着解锁的 biz_col='openlive' 比对 service_to_app 行 MEM_03A3，从它左边的列里直接读出默认软件：app_col = '抖音'！再比对 MEM_09DF 读出 time_window_col = '12:30-13:30'。", "unlocked": ["第1跳识别业务: biz_col = 'openlive'", "第2跳(读 MEM_03A3): app_col = '抖音'", "第2跳(读 MEM_09DF): time_window_col = '12:30-13:30'"], "hop2": "service_to_app[biz_col='openlive'] ➔ 读出同行的 app_col = '抖音'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '抖音'\n  AND biz_col = 'openlive';", "rescued": "➔ 把向量余弦仅 0.28 的参数卡 【MEM_9826 (抖音 | openlive: 1080p, 50ms)】 以 select_sim = 0.98 精确捞出，拿到 1080p 和 50ms！", "assembled": {"business": "openlive (第1步识别)", "application": "抖音 (第2跳 MEM_03A3 提供)", "time_window": "12:30-13:30 (第2跳 MEM_09DF 提供)", "resolution": "1080p (第3步 MEM_9826 提供)", "latency": "50ms (第3步 MEM_9826 提供)"}}, "table_rows": [{"id": "MEM_03A3", "sub": "service_to_app (只管: 业务 -> 默认软件)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "openlive 抖音 开直播默认使用抖音", "v_sim": 0.61, "step2_role": "① 第2跳匹配 biz_col='openlive' ➔ 读出左边列 app_col='抖音'（无画质/时延）", "s_sim": 0.84, "final": 0.8089, "tag": "step1"}, {"id": "MEM_09DF", "sub": "periodic_preference (只管: 软件业务 -> 时间)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "12:30-13:30", "alias": "-", "target": "-", "vec": "12:30-13:30 -> 抖音:openlive", "v_sim": 0.35, "step2_role": "② 第2跳匹配 抖音|openlive ➔ 读出左边列 time_window_col='12:30-13:30'", "s_sim": 0.96, "final": 0.9153, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (只管: 软件业务 -> 画质时延)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive 默认参数：1080p, 50ms", "v_sim": 0.28, "step2_role": "③ 第3步 SQL SELECT 捞出此卡 ➔ 拿到剩余参数 1080p / 50ms！", "s_sim": 0.98, "final": 0.9275, "tag": "step3"}]}, {"sid": "S-USER_001-16 (扩展验证：否定前半句「不弄抖音直播」 -> 防误捞)", "short": "扩展2:否定子句过滤", "time": "2026-10-24 18:30", "title": "否定对比句式：剥离「不弄抖音直播」→ 仅用后半句解锁腾讯会议槽位 → SQL 捞出 MEM_8B49", "query": "现在不弄抖音直播了，改在车队颠簸赶路那会儿用腾讯会议开会。", "agent_reply": "收到，已为您切换至大巴转场途中下的腾讯会议配置：720p、时延100ms以内，18:45至19:45（60min）。确认按这套配置开通吗？", "step1": {"desc": "先按标点切分子句：前半句含否定词「不弄」，将其中的 (抖音, openlive) 记入否定黑名单；拿正向后半句「改在车队颠簸赶路那会儿用腾讯会议开会」算余弦，命中场景跳板行 MEM_8B49 (vector_sim = 0.79)。", "hits": ["➔ 正向子句命中跳板行 MEM_8B49 (scene='大巴转场途中', vector_sim = 0.79)；前半句「抖音直播」记入否定排除池"]}, "step2": {"desc": "从 MEM_8B49 左边列读出 scene_col='大巴转场途中', app_col='腾讯会议', biz_col='meeting'，并比对 MEM_DE73 读出 time_window_col='18:45-19:45'。同时阻止任何 app_col='抖音' 的行进入槽位池。", "unlocked": ["scene_col = '大巴转场途中'", "app_col = '腾讯会议'", "biz_col = 'meeting'", "已拉黑排除: app_col='抖音', biz_col='openlive'"], "hop2": "比对 MEM_DE73 ➔ 读出 time_window_col = '18:45-19:45'"}, "step3": {"sql": "SELECT memory_id, subtype, memory_key\nFROM vector\nWHERE user_id = 'mobile_persona_001'\n  AND app_col = '腾讯会议'\n  AND biz_col = 'meeting'\n  AND scene_col = '大巴转场途中';\n-- 同时对命中否定黑名单的 MEM_9826 (抖音) 执行 FinalScore *= 0.15", "rescued": "➔ 精确捞出 【MEM_8B49 (大巴转场途中 | 腾讯会议: 720p, 100ms)】（select_sim = 0.98）；而被否定的 【MEM_9826 (抖音)】 不仅 select_sim = 0，且总分乘以 0.15 降权至 0.0984。", "assembled": {"scene": "大巴转场途中", "application": "腾讯会议", "business": "meeting", "time_window": "18:45-19:45", "resolution": "720p", "latency": "100ms"}}, "table_rows": [{"id": "MEM_8B49", "sub": "scene_preference (跳板兼目标卡)", "app": "腾讯会议", "biz": "meeting", "scene": "大巴转场途中", "tw": "-", "alias": "-", "target": "-", "vec": "大巴转场途中 腾讯会议: 720p, 100ms", "v_sim": 0.79, "step2_role": "★第1步正向子句余弦命中 ➔ 第2步读出 scene=大巴转场途中 ➔ 第3步 SQL 0.98 捞出", "s_sim": 0.98, "final": 0.8932, "tag": "step3"}, {"id": "MEM_DE73", "sub": "periodic_preference", "app": "腾讯会议", "biz": "meeting", "scene": "-", "tw": "18:45-19:45", "alias": "-", "target": "-", "vec": "18:45-19:45 -> 腾讯会议:meeting", "v_sim": 0.48, "step2_role": "★第2步二跳读出左边列 tw=18:45-19:45", "s_sim": 0.96, "final": 0.8832, "tag": "step2"}, {"id": "MEM_9826", "sub": "preferred_value (被否定项)", "app": "抖音", "biz": "openlive", "scene": "-", "tw": "-", "alias": "-", "target": "-", "vec": "抖音 openlive: 1080p, 50ms", "v_sim": 0.54, "step2_role": "🚫 命中前半句否定词「不弄」，禁止进入 SQL 槽位且总分 ×0.15 降权", "s_sim": 0.0, "final": 0.0984, "tag": "negated"}]}];
+    let curIdx = 13;
+
+    function stepDelta(d) {
+      curIdx = (curIdx + d + SESSIONS.length) % SESSIONS.length;
+      selectSession(curIdx);
+    }
+
+    function renderButtons() {
+      const box = document.getElementById("case-btns");
+      box.innerHTML = SESSIONS.map((s, i) => {
+        const active = i === curIdx;
+        const isStar = s.short.startsWith("★");
+        const cls = active
+          ? "px-2.5 py-1 rounded text-xs font-bold bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+          : (isStar
+              ? "px-2.5 py-1 rounded text-xs font-bold bg-[var(--secondary)] text-[var(--primary)] border border-[var(--primary)]"
+              : "px-2 py-1 rounded text-xs font-medium bg-[var(--card)] border border-[var(--border)] hover:border-[var(--primary)]");
+        return `<button onclick="selectSession(${i})" class="${cls}">${s.short}</button>`;
+      }).join("");
+    }
+
+    function selectSession(idx) {
+      curIdx = idx;
+      renderButtons();
+      const s = SESSIONS[idx];
+
+      document.getElementById("case-title").textContent = `${s.sid} — ${s.title}`;
+      document.getElementById("case-time").textContent = `检索时刻：${s.time}`;
+      document.getElementById("case-query").textContent = `「${s.query}」`;
+      document.getElementById("case-reply").textContent = s.agent_reply;
+
+      // Step 1
+      document.getElementById("step1-desc").textContent = s.step1.desc;
+      const s1Hits = document.getElementById("step1-hits");
+      if (!s.step1.hits.length) {
+        s1Hits.innerHTML = `<div class="p-2 rounded bg-[var(--card)] border border-[var(--border)] text-[var(--muted-foreground)]">本场无跳板行余弦命中</div>`;
+      } else {
+        s1Hits.innerHTML = s.step1.hits.map(h => `
+          <div class="p-2 rounded bg-[var(--card)] border-2 border-[var(--primary)] font-mono font-bold text-[var(--primary)]">
+            🎯 ${h}
+          </div>
+        `).join("");
+      }
+
+      // Step 2
+      document.getElementById("step2-desc").textContent = s.step2.desc;
+      const s2Unl = document.getElementById("step2-unlocked");
+      if (!s.step2.unlocked.length) {
+        s2Unl.innerHTML = `<span class="text-[var(--muted-foreground)]">(无槽位解锁)</span>`;
+      } else {
+        s2Unl.innerHTML = s.step2.unlocked.map(u => `
+          <span class="px-2 py-0.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-semibold">${u}</span>
+        `).join("");
+      }
+      document.getElementById("step2-hop2").textContent = s.step2.hop2;
+
+      // Step 3
+      document.getElementById("step3-sql").textContent = s.step3.sql;
+      document.getElementById("step3-rescued").textContent = s.step3.rescued;
+      const s3Asm = document.getElementById("step3-assembled");
+      s3Asm.innerHTML = Object.entries(s.step3.assembled).map(([k, v]) => `
+        <span class="px-2 py-0.5 rounded bg-[var(--background)] border border-[var(--border)]">
+          <span class="text-[var(--muted-foreground)]">${k}=</span><b>${v}</b>
+        </span>
+      `).join("");
+
+      // Live SQLite Table
+      const tbody = document.getElementById("sqlite-live-tbody");
+      if (!s.table_rows.length) {
+        tbody.innerHTML = `<tr><td colspan="12" class="p-4 text-center text-[var(--muted-foreground)]">当前时刻 SQLite vector 表为空（首场会话尚未结束落盘）</td></tr>`;
+      } else {
+        tbody.innerHTML = s.table_rows.map(r => {
+          let rowCls = "bg-[var(--card)]";
+          let badge = "";
+          if (r.tag === "step1") {
+            badge = `<span class="px-1.5 py-0.5 rounded bg-[var(--secondary)] text-[var(--primary)] font-bold">🎯 第1跳命中（拿时间/指代）</span>`;
+          } else if (r.tag === "step2") {
+            badge = `<span class="px-1.5 py-0.5 rounded bg-[var(--secondary)] font-bold">🔗 第2跳命中（拿 app+biz）</span>`;
+          } else if (r.tag === "step3") {
+            rowCls = "bg-[var(--background)] border-l-4 border-[var(--primary)]";
+            badge = `<span class="px-1.5 py-0.5 rounded bg-[var(--primary)] text-[var(--primary-foreground)] font-bold">✅ 第3步 SQL 捞出（拿参数）</span>`;
+          } else if (r.tag === "negated") {
+            badge = `<span class="px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted-foreground)]">🚫 否定子句拉黑降权</span>`;
+          }
+          return `
+            <tr class="${rowCls}">
+              <td class="p-2 font-bold">
+                <div class="text-[var(--primary)]">${r.id}</div>
+                <div class="text-[var(--muted-foreground)] font-normal">${r.sub}</div>
+                <div class="mt-0.5">${badge}</div>
+              </td>
+              <td class="p-2 border-l border-[var(--border)] font-bold ${r.app !== '-' ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}">${r.app}</td>
+              <td class="p-2 font-bold ${r.biz !== '-' ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}">${r.biz}</td>
+              <td class="p-2 font-semibold ${r.scene !== '-' ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}">${r.scene}</td>
+              <td class="p-2 font-bold ${r.tw !== '-' ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}">${r.tw}</td>
+              <td class="p-2 font-semibold ${r.alias !== '-' ? 'text-[var(--foreground)]' : 'text-[var(--muted-foreground)]'}">${r.alias}</td>
+              <td class="p-2 border-r border-[var(--border)] font-bold ${r.target !== '-' ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}">${r.target}</td>
+              <td class="p-2 text-[var(--muted-foreground)]">${r.vec}</td>
+              <td class="p-2 border-l border-[var(--border)] font-bold">${r.v_sim.toFixed(2)}</td>
+              <td class="p-2 font-sans text-xs">${r.step2_role}</td>
+              <td class="p-2 font-bold text-sm ${r.s_sim >= 0.9 ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)]'}">${r.s_sim.toFixed(2)}</td>
+              <td class="p-2 font-bold text-sm">${r.final > 0 ? r.final.toFixed(4) : '-'}</td>
+            </tr>
+          `;
+        }).join("");
+      }
+    }
+
+    renderButtons();
+    selectSession(13);
+  </script>
+</body>
+</html>

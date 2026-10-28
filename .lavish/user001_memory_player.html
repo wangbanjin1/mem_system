@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased p-3">
+  <div class="bg-white text-slate-900 border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+    <!-- Header & Mode Switch -->
+    <div class="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-200">
+      <div>
+        <h2 class="text-slate-900 font-semibold text-base">意图理解和记忆萃取过程</h2>
+        <p class="text-slate-500 text-xs">S-01 ~ S-13 的对话展开为：① 实际多轮台词与 Turn 1 检索拼装 → ② 会话结束后的正交拆解/拦截 → ③ 五层记忆库实时变化</p>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <button onclick="switchMainView(0)" id="view-btn-0" class="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600 text-white transition">🎬 逐场对话 × 记忆萃取过程 (S-01~S-13)</button>
+        <button onclick="switchMainView(1)" id="view-btn-1" class="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-200 text-slate-800 transition">🗄️ 磁盘 memory.json 与 SQLite</button>
+      </div>
+    </div>
+
+    <!-- VIEW 0: 13-Session Chronological Player -->
+    <div id="main-view-0" class="space-y-3">
+      <!-- Timeline Bar (S-01 to S-13) -->
+      <div class="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <button onclick="stepDelta(-1)" class="px-2 py-1 rounded bg-slate-200 text-slate-800 text-xs font-semibold shrink-0 hover:opacity-80">◀ 上一场</button>
+        <div id="timeline-btns" class="flex items-center gap-1 flex-wrap"></div>
+        <button onclick="stepDelta(1)" class="px-2 py-1 rounded bg-slate-200 text-slate-800 text-xs font-semibold shrink-0 hover:opacity-80">下一场 ▶</button>
+      </div>
+
+      <!-- Current Session Banner -->
+      <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span id="sess-title" class="font-bold text-sm text-indigo-600"></span>
+            <span id="sess-tag" class="px-2 py-0.5 rounded text-xs font-semibold bg-slate-200 text-slate-800"></span>
+          </div>
+          <span id="sess-meta" class="font-mono text-xs text-slate-500"></span>
+        </div>
+        <div id="sess-summary" class="text-xs leading-relaxed text-slate-900"></div>
+      </div>
+
+      <!-- 3-Column Linked Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 text-xs">
+        <!-- COL 1 (5 cols): Actual Dialogue + Turn 1 Memory Retrieval -->
+        <div class="lg:col-span-5 space-y-2.5 flex flex-col">
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+            <div class="font-semibold text-indigo-600 border-b border-slate-200 pb-1">💬 ① 实际多轮对话原文 (sessions.jsonl)</div>
+            <div id="dialogue-box" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2 flex-1">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+              <span class="font-semibold text-indigo-600">🔍 ② Turn 1 记忆检索与跨层拼装（客服反问前）</span>
+              <span id="hit-count-badge" class="font-mono px-1.5 py-0.5 rounded bg-white border border-slate-200"></span>
+            </div>
+            <div id="search-box" class="space-y-1.5"></div>
+          </div>
+        </div>
+
+        <!-- COL 2 (3 cols): Post-Session Orthogonal Extraction & Gatekeeper -->
+        <div class="lg:col-span-3 p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2 flex flex-col justify-between">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+              <span class="font-semibold text-indigo-600">⚙️ ③ 本场结束后：正交拆解与门控</span>
+              <span id="evt-count-badge" class="font-mono px-1.5 py-0.5 rounded bg-white border border-slate-200"></span>
+            </div>
+            <div id="events-box" class="space-y-2"></div>
+          </div>
+          <div class="pt-2 border-t border-slate-200 text-slate-500 space-y-1">
+            <div class="font-semibold text-slate-900">📌 图例说明：</div>
+            <div>• <span class="font-semibold">🟢 NEW</span>：本场对话结束后新建立的记忆节点</div>
+            <div>• <span class="font-semibold">🔼 +1票</span>：本场对话确认/复用后投票强化（R重置为1.0）</div>
+            <div>• <span class="font-semibold">🎯 本场命中</span>：Turn 1 检索命中并用于拼装参数的节点</div>
+          </div>
+        </div>
+
+        <!-- COL 3 (4 cols): 5 Orthogonal Memory Bank Snapshot After Session -->
+        <div class="lg:col-span-4 p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+          <div class="flex items-center justify-between border-b border-slate-200 pb-1">
+            <span class="font-semibold text-indigo-600">🧠 ④ 截至本场结束后的五层正交记忆库</span>
+            <span id="mem-count-badge" class="font-mono px-1.5 py-0.5 rounded bg-white border border-slate-200"></span>
+          </div>
+          <div id="membank-box" class="space-y-2 max-h-[430px] overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 1: Disk JSON Inspector & SQLite Table -->
+    <div id="main-view-1" class="hidden space-y-3 text-xs">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+        <div class="md:col-span-5 p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5">
+          <div class="font-semibold text-indigo-600 pb-1 border-b border-slate-200">📂 点击任意记忆节点查看磁盘 memory.json 原文</div>
+          <div id="disk-node-list" class="space-y-1 max-h-80 overflow-y-auto pr-1"></div>
+        </div>
+        <div class="md:col-span-7 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+          <div class="font-semibold text-indigo-600 pb-1 mb-1.5 border-b border-slate-200" id="disk-json-title">📄 memory.json 内容</div>
+          <pre id="disk-json-pre" class="font-mono text-xs whitespace-pre-wrap bg-white p-2.5 rounded border border-slate-200 max-h-72 overflow-y-auto"></pre>
+        </div>
+      </div>
+
+      <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5">
+        <div class="font-semibold text-indigo-600">📊 SQLite (index/memory.db) 槽位列对照（互不耦合：参数层无 time_window，时间路由层无画质/时延）</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse font-mono">
+            <thead>
+              <tr class="border-b border-slate-200 text-slate-500">
+                <th class="py-1 px-2">正交层 (subtype)</th>
+                <th class="py-1 px-2">memory_key</th>
+                <th class="py-1 px-2">终态 (status)</th>
+                <th class="py-1 px-2">app_col</th>
+                <th class="py-1 px-2">biz_col</th>
+                <th class="py-1 px-2">scene_col</th>
+                <th class="py-1 px-2">time_window_col</th>
+                <th class="py-1 px-2">专属净荷 (content)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[var(--border)]">
+              <tr><td class="py-1 px-2 font-bold text-indigo-600">preferred_value</td><td class="py-1 px-2">douyin | openlive</td><td class="py-1 px-2">reinforced (6票)</td><td class="py-1 px-2">douyin</td><td class="py-1 px-2">openlive</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2">1080p / 50ms</td></tr>
+              <tr><td class="py-1 px-2 font-bold text-indigo-600">scene_preference</td><td class="py-1 px-2">大巴转场途中 | tencent_meeting | meeting</td><td class="py-1 px-2">reinforced (3票)</td><td class="py-1 px-2">tencent_meeting</td><td class="py-1 px-2">meeting</td><td class="py-1 px-2">大巴转场途中</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2">720p / 100ms</td></tr>
+              <tr><td class="py-1 px-2 font-bold">periodic_preference</td><td class="py-1 px-2">12:30-13:30 | douyin:openlive</td><td class="py-1 px-2">reinforced (6票)</td><td class="py-1 px-2">douyin</td><td class="py-1 px-2">openlive</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2">12:30-13:30</td><td class="py-1 px-2 text-slate-500">(纯时间指针，无画质/时延)</td></tr>
+              <tr><td class="py-1 px-2 font-bold">periodic_preference</td><td class="py-1 px-2">18:45-19:45 | tencent_meeting:meeting</td><td class="py-1 px-2">reinforced (3票)</td><td class="py-1 px-2">tencent_meeting</td><td class="py-1 px-2">meeting</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2">18:45-19:45</td><td class="py-1 px-2 text-slate-500">(纯时间指针，无画质/时延)</td></tr>
+              <tr><td class="py-1 px-2">service_to_app</td><td class="py-1 px-2">openlive / meeting</td><td class="py-1 px-2">active (归纳)</td><td class="py-1 px-2">douyin / tencent_meeting</td><td class="py-1 px-2">openlive / meeting</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2 text-slate-500">(纯应用↔业务路由指针)</td></tr>
+              <tr><td class="py-1 px-2">expression (4个)</td><td class="py-1 px-2">午间例行 / 保个基本画质 / 绝不能有马赛克 / 别拖沓</td><td class="py-1 px-2">active / reinforced</td><td class="py-1 px-2">douyin / tencent_meeting</td><td class="py-1 px-2">openlive / meeting</td><td class="py-1 px-2">(按需)</td><td class="py-1 px-2 text-slate-500">(空)</td><td class="py-1 px-2">alias → target</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DATA = {"defs":{"expression::午间例行":{"id":"MEM_650F4420DF42","sub":"expression","key":"午间例行","c":{"alias":"午间例行","source_expression":"午间例行","target":"12:30-13:30","validity":"long_term","note":"表达映射：「午间例行」-> 12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播"}},"periodic_preference::12:30-13:30 | douyin:openlive":{"id":"MEM_502DB8D07FE7","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}},"preferred_value::douyin | openlive":{"id":"MEM_4A50331AF02F","sub":"preferred_value","key":"douyin | openlive","c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},"expression::保个基本画质":{"id":"MEM_FA290A26082B","sub":"expression","key":"保个基本画质","c":{"alias":"保个基本画质","source_expression":"保个基本画质","target":"720p","validity":"long_term","note":"表达映射：「保个基本画质」-> 720p","application":"tencent_meeting","business":"meeting","scene":"大巴转场途中","app_cn":"腾讯会议","service_cn":"会议"}},"periodic_preference::18:45-19:45 | tencent_meeting:meeting":{"id":"MEM_DE73AE7E2885","sub":"periodic_preference","key":"18:45-19:45 | tencent_meeting:meeting","c":{"condition":"18:45-19:45","value":"tencent_meeting:meeting","time_window":"18:45-19:45","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","validity":"long_term","note":"周期时间路由：18:45-19:45 -> tencent_meeting (meeting)","declaration_mode":"explicit"}},"scene_preference::大巴转场途中 | tencent_meeting | meeting":{"id":"MEM_836CCDA2EDFE","sub":"scene_preference","key":"大巴转场途中 | tencent_meeting | meeting","c":{"scene":"大巴转场途中","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","resolution":"720p","latency":"100ms","validity":"long_term","note":"场景参数覆写：大巴转场途中 下使用 tencent_meeting (meeting)","declaration_mode":"explicit"}},"service_to_app::openlive":{"id":"MEM_03A3A1581A07","sub":"service_to_app","key":"openlive","c":{"business":"openlive","application":"douyin","validity":"long_term","note":"跨会话归纳路由指针：openlive 默认使用 douyin（累计 2 次观测）"}},"service_to_app::meeting":{"id":"MEM_76A4707C3F6E","sub":"service_to_app","key":"meeting","c":{"business":"meeting","application":"tencent_meeting","validity":"long_term","note":"跨会话归纳路由指针：meeting 默认使用 tencent_meeting（累计 2 次观测）"}},"scene_preference::周末午休 | kuaishou | video":{"id":"MEM_FF2103C0588A","sub":"scene_preference","key":"周末午休 | kuaishou | video","c":{"scene":"周末午休","application":"kuaishou","business":"video","app_cn":"快手","service_cn":"短视频","resolution":"720p","latency":"80ms","validity":"long_term","note":"场景参数覆写：周末午休 下使用 kuaishou (video)","declaration_mode":"implicit"}},"expression::绝不能有马赛克":{"id":"MEM_B9A0F6A55155","sub":"expression","key":"绝不能有马赛克","c":{"alias":"绝不能有马赛克","source_expression":"绝不能有马赛克","target":"1080p","validity":"long_term","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","note":"表达映射：「绝不能有马赛克」-> 1080p"}},"scene_preference::阶段工作总结会 | dingtalk | meeting":{"id":"MEM_C4306FBC1B51","sub":"scene_preference","key":"阶段工作总结会 | dingtalk | meeting","c":{"scene":"阶段工作总结会","application":"dingtalk","business":"meeting","app_cn":"钉钉","service_cn":"会议","resolution":"720p","latency":"80ms","validity":"long_term","note":"场景参数覆写：阶段工作总结会 下使用 dingtalk (meeting)","declaration_mode":"implicit"}},"expression::别拖沓":{"id":"MEM_40A358C00D78","sub":"expression","key":"别拖沓","c":{"alias":"别拖沓","source_expression":"别拖沓","target":"50ms","validity":"long_term","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","note":"表达映射：「别拖沓」-> 50ms"}}},"steps":[{"idx":1,"sid":"S-USER_001-01","short":"S-01","time":"2026年10月10日12时15分","role":"evidence_session","bp":"main","tag":"🟢 建联：主线首次声明","sum":"用户在 Turn 1 说出『抖音开直播 + 12:30开始』，Turn 2 补充『1080p + 50ms + 60分钟 + 午间例行=12:30-13:30』。系统将这一场对话正交拆成 3 个互不耦合的节点落盘：preferred_value（只存1080p/50ms）、periodic_preference（只存12:30-13:30→douyin:openlive）、expression（只存午间例行→12:30-13:30）。","turns":[{"turn":1,"user":"你好，需要给抖音开直播做一个网络保障，时间是今天12时30分开始。","agent":"收到，您是要在抖音开直播对吧？请确认一下画质、时延和持续时长。"},{"turn":2,"user":"画质1080p，时延50ms以内，播60分钟。我说‘午间例行’，指的是12:30-13:30。这次按午间例行安排，也就是12:30-13:30，以后也照这个时间理解。","agent":"好的，已为您开通本次保障：抖音开直播，1080p，50ms以内，12:30-13:30，持续60分钟。并已为您记录‘午间例行’对应12:30-13:30，以后按这个时间理解。"}],"hits":[],"evts":[{"t":"PREFERENCE_SET","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_SET","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"午间例行","val":"long_term","turns":[2],"c":{"alias":"午间例行","source_expression":"午间例行","target":"12:30-13:30","validity":"long_term","note":"表达映射：「午间例行」-> 12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播"}}],"mems":[["expression::午间例行","active",1,1.0,1.0,"NEW",0],["periodic_preference::12:30-13:30 | douyin:openlive","active",1,1.0,1.0,"NEW",0],["preferred_value::douyin | openlive","active",1,1.0,1.0,"NEW",0]]},{"idx":2,"sid":"S-USER_001-02","short":"S-02","time":"2026年10月11日18时30分","role":"evidence_session","bp":"sub_01","tag":"🟢 建联：支线1跨轮消歧","sum":"用户在大巴转场途中给腾讯会议开保障，Turn 2 说黑话『保个基本画质』，经客服追问后在 Turn 3 确认为 720p。系统正交拆解为：scene_preference（大巴转场途中|tencent_meeting|meeting → 720p/100ms）、periodic_preference（18:45-19:45）、expression（保个基本画质→720p）。","turns":[{"turn":1,"user":"在大巴转场途中网络不太稳，帮我给腾讯会议会议开个保障，时间从今天18时45分开始。","agent":"收到，已确认是腾讯会议会议保障。请问画质、时延和持续时长有什么具体要求？"},{"turn":2,"user":"画质按‘保个基本画质’来，时延控制在100ms以内，预计持续60min。","agent":"确认一下，您说的‘保个基本画质’具体指哪个画质档位？以后也按这个理解吗？"},{"turn":3,"user":"对，就是画质档位720p，往后都照这个标准记，开通吧。","agent":"好的，已按您刚确认的含义记录，并为您开通腾讯会议会议保障（720p / 时延≤100ms）。祝您使用愉快！"}],"hits":[],"evts":[{"t":"PREFERENCE_SET","sub":"scene_preference","key":"大巴转场途中 | tencent_meeting | meeting","val":"long_term","turns":[1,2,3],"c":{"scene":"大巴转场途中","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","resolution":"720p","latency":"100ms","validity":"long_term","note":"场景参数覆写：大巴转场途中 下使用 tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"PREFERENCE_SET","sub":"periodic_preference","key":"18:45-19:45 | tencent_meeting:meeting","val":"long_term","turns":[1,2,3],"c":{"condition":"18:45-19:45","value":"tencent_meeting:meeting","time_window":"18:45-19:45","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","validity":"long_term","note":"周期时间路由：18:45-19:45 -> tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"保个基本画质","val":"long_term","turns":[3],"c":{"alias":"保个基本画质","source_expression":"保个基本画质","target":"720p","validity":"long_term","note":"表达映射：「保个基本画质」-> 720p","application":"tencent_meeting","business":"meeting","scene":"大巴转场途中","app_cn":"腾讯会议","service_cn":"会议"}}],"mems":[["expression::保个基本画质","active",1,1.0,1.0,"NEW",0],["expression::午间例行","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","active",1,0.975,1.0,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","active",1,1.0,1.0,"NEW",0],["preferred_value::douyin | openlive","active",1,0.988,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","active",1,1.0,1.0,"NEW",0]]},{"idx":3,"sid":"S-USER_001-03","short":"S-03","time":"2026年10月12日12时15分","role":"reinforcement_session","bp":"main","tag":"🔵 复用+归纳：主线二次强化","sum":"用户满足最小表达说『按午间例行的时间，用抖音做开直播』，省略了画质、时延和具体时刻！系统在 Turn 1 自动跨 3 层检索拼出『12:30-13:30 + 1080p + 50ms』供客服反问确认；对话结束后主线升为 reinforced(2票)，同时跨会话归纳器发现 openlive 已连续2次使用 douyin，自动生成第4层节点 service_to_app[openlive→douyin]！","turns":[{"turn":1,"user":"老规矩，在常规周期保障现场，按‘午间例行’的时间，用抖音做开直播，帮我把保障开上。","agent":"收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"好的，确认按这个配置直接开通。","agent":"好的，已为您成功受理抖音开直播网络保障（1080p / 时延≤50ms），祝您使用愉快！"}],"hits":[["preferred_value::douyin | openlive",0.8924,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.8786,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["expression::午间例行",0.8464,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}}],"mems":[["expression::保个基本画质","active",1,1.0,1.0,"",0],["expression::午间例行","active",1,1.0,1.0,"",1],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",2,1.0,1.88,"+1票",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","active",1,0.985,1.0,"",0],["preferred_value::douyin | openlive","reinforced",2,1.0,1.88,"+1票",1],["scene_preference::大巴转场途中 | tencent_meeting | meeting","active",1,0.985,1.0,"",0],["service_to_app::openlive","active",1,1.0,1.0,"NEW",0]]},{"idx":4,"sid":"S-USER_001-04","short":"S-04","time":"2026年10月13日10时00分","role":"distractor_session","bp":"distractor_ood","tag":"⚪ 拒识：纯域外报修干扰","sum":"用户提出『宽带光纤装维报修』（域外诉求），客服明确拒识。记忆系统在 Turn 1 检索 0 命中，对话结束后抽取 0 事件，右侧五层长期记忆库纹丝不动（零污染）。","turns":[{"turn":1,"user":"你好，现场这边网络好像有问题，能帮我安排师傅处理一下宽带光纤装维报修吗？","agent":"抱歉，本智能助手仅提供手机移动网络加速与保障服务，暂不支持办理宽带光纤装维报修业务，建议您联系宽带专线处理。"}],"hits":[],"evts":[],"mems":[["expression::保个基本画质","active",1,1.0,1.0,"",0],["expression::午间例行","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",2,0.99,1.88,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","active",1,0.968,1.0,"",0],["preferred_value::douyin | openlive","reinforced",2,0.995,1.88,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","active",1,0.968,1.0,"",0],["service_to_app::openlive","active",1,0.991,1.0,"",0]]},{"idx":5,"sid":"S-USER_001-05","short":"S-05","time":"2026年10月14日18时30分","role":"reinforcement_session","bp":"sub_01","tag":"🔵 复用+归纳：支线1二次强化","sum":"用户在大巴转场途中说『用腾讯会议做会议，画质按保个基本画质』，省略了时延(100ms)与起止时段(18:45-19:45)。Turn 1 跨层召回 expression(720p) + periodic_preference(18:45-19:45) + scene_preference(720p/100ms)；对话结束后支线升为 reinforced(2票)，并归纳生成 service_to_app[meeting→tencent_meeting]！","turns":[{"turn":1,"user":"老规矩，在大巴转场途中，用腾讯会议做会议，画质按‘保个基本画质’，帮我把保障开上。","agent":"收到，我调取到之前登记的腾讯会议会议配置：720p、时延100ms以内，18时45分开始、19时45分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"对，开通吧。","agent":"已开通，腾讯会议开会，720p，100ms以内，18:45-19:45，持续60分钟。稳住节奏，别掉链子！"}],"hits":[["scene_preference::大巴转场途中 | tencent_meeting | meeting",0.8832,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND scene=大巴转场途中"],["periodic_preference::18:45-19:45 | tencent_meeting:meeting",0.8732,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND time_window=18:45-19:45"],["expression::保个基本画质",0.8449,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND scene=大巴转场途中"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"scene_preference","key":"大巴转场途中 | tencent_meeting | meeting","val":"long_term","turns":[1,2],"c":{"scene":"大巴转场途中","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","resolution":"720p","latency":"100ms","validity":"long_term","note":"场景参数覆写：大巴转场途中 下使用 tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"18:45-19:45 | tencent_meeting:meeting","val":"long_term","turns":[1,2],"c":{"condition":"18:45-19:45","value":"tencent_meeting:meeting","time_window":"18:45-19:45","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","validity":"long_term","note":"周期时间路由：18:45-19:45 -> tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"保个基本画质","val":"long_term","turns":[1],"c":{"alias":"保个基本画质","source_expression":"保个基本画质","target":"720p","validity":"long_term","application":"tencent_meeting","business":"meeting","scene":"大巴转场途中","app_cn":"腾讯会议","service_cn":"会议","note":"表达映射：「保个基本画质」-> 720p"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"+1票",1],["expression::午间例行","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",2,0.976,1.88,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,1.0,1.88,"+1票",1],["preferred_value::douyin | openlive","reinforced",2,0.988,1.88,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,1.0,1.88,"+1票",1],["service_to_app::meeting","active",1,1.0,1.0,"NEW",0],["service_to_app::openlive","active",1,0.978,1.0,"",0]]},{"idx":6,"sid":"S-USER_001-06","short":"S-06","time":"2026年10月15日12时15分","role":"reuse_session","bp":"main","tag":"🟣 改时长：单次延长不改基线","sum":"Turn 1 用户只说『用抖音做开直播』，系统跨层检索出 1080p/50ms 与基线时段 12:30-13:30(60min)；Turn 2 用户因今日活动延长临时改为 180min。对话结束后，系统只给基线 preferred_value 和 periodic_preference(12:30-13:30) 投票强化(+1票→3票)，绝不把单次 180min 写回覆盖 60min 周期路由！","turns":[{"turn":1,"user":"今天在常规周期保障现场，老规矩，用抖音做开直播，帮我把保障开上。","agent":"收到，您是要在抖音开直播，按老规矩来对吧？我这边调取一下您的长期配置：画质1080p、时延50ms以内、时长60分钟，从12:30开始。确认一下，是按这个开通吗？"},{"turn":2,"user":"对，老规矩不变。不过今天现场活动延长了，帮我把保障时长延长到120分钟。","agent":"好的，老规矩配置不变，画质1080p、时延50ms以内，时长已为您延长至120分钟，从12:30到14:30。保障已开通，祝您直播顺利！"}],"hits":[["preferred_value::douyin | openlive",0.9136,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.9005,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["service_to_app::openlive",0.8089,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"",0],["expression::午间例行","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",3,1.0,2.29,"+1票",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,0.992,1.88,"",0],["preferred_value::douyin | openlive","reinforced",3,1.0,2.29,"+1票",1],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,0.992,1.88,"",0],["service_to_app::meeting","active",1,0.993,1.0,"",0],["service_to_app::openlive","active",1,0.97,1.0,"",1]]},{"idx":7,"sid":"S-USER_001-07","short":"S-07","time":"2026年10月16日12时15分","role":"reinforcement_session","bp":"main","tag":"🔵 复用：主线常规周期复用","sum":"用户再次说『按午间例行的时间，用抖音做开直播』，Turn 1 精准命中 3 个正交层补全所有参数；会话结束后主线累积至 4 票（艾宾浩斯稳定性 S 提升至 2.52）。","turns":[{"turn":1,"user":"老规矩，在常规周期保障现场，按‘午间例行’的时间，用抖音做开直播，帮我把保障开上。","agent":"收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"对，直接开通。","agent":"好的，已为您开通抖音开直播保障，画质1080p、时延50ms以内，时长60分钟，12:30到13:30。祝您午间直播顺利！"}],"hits":[["preferred_value::douyin | openlive",0.9267,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.9158,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["expression::午间例行",0.8387,"[黑话展开: 午间例行->12:30-13:30] [指针跳: periodic_preference[12:30-13:30] -> douyin|openlive] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"",0],["expression::午间例行","active",1,1.0,1.0,"",1],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",4,1.0,2.56,"+1票",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,0.982,1.88,"",0],["preferred_value::douyin | openlive","reinforced",4,1.0,2.56,"+1票",1],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,0.982,1.88,"",0],["service_to_app::meeting","active",1,0.983,1.0,"",0],["service_to_app::openlive","active",1,0.961,1.0,"",0]]},{"idx":8,"sid":"S-USER_001-08","short":"S-08","time":"2026年10月17日12时30分","role":"distractor_session","bp":"distractor_mixed","tag":"🟡 隔离：周末午休单次快手干扰","sum":"用户周末午休临时用快手刷短视频（720p/80ms）并顺带查话费（一办一拒）。由于快手短视频是单次临时行为、无长期习惯声明，系统将其标记为 status=candidate（1票候选）隔离在候选池中，既不转正也不干扰主线检索。","turns":[{"turn":1,"user":"周末午休12点30分到13点30分，用快手刷短视频，画质720p，时延控制在80ms以内，保障开60分钟。另外帮我把手机话费充一下，顺便查查账单。","agent":"收到，快手短视频保障已为您受理：画质720p、时延80ms以内、时长60分钟，从12:30到13:30。不过话费充值和账单查询不在本助手服务范围内，建议您通过运营商官方渠道办理。"}],"hits":[],"evts":[{"t":"PREFERENCE_SET","sub":"scene_preference","key":"周末午休 | kuaishou | video","val":"long_term","turns":[1],"c":{"scene":"周末午休","application":"kuaishou","business":"video","app_cn":"快手","service_cn":"短视频","resolution":"720p","latency":"80ms","validity":"long_term","note":"场景参数覆写：周末午休 下使用 kuaishou (video)","declaration_mode":"implicit"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"",0],["expression::午间例行","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",4,0.992,2.56,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,0.971,1.88,"",0],["preferred_value::douyin | openlive","reinforced",4,0.996,2.56,"",0],["scene_preference::周末午休 | kuaishou | video","candidate",1,1.0,1.0,"NEW",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,0.971,1.88,"",0],["service_to_app::meeting","active",1,0.973,1.0,"",0],["service_to_app::openlive","active",1,0.951,1.0,"",0]]},{"idx":9,"sid":"S-USER_001-09","short":"S-09","time":"2026年10月18日12时15分","role":"correction_session","bp":"event_override","tag":"🟠 拦截：现场特殊临时改参数","sum":"Turn 1 用户在公益赛事现场按老规矩开抖音直播，客服调出 1080p/50ms；Turn 2 用户说『今天现场特殊，画质临时调到720p，时延压到30ms』。系统抽取时识别出 validity=temporary（临时覆写），在入库门控处直接拦截 720p/30ms，保护右侧 preferred_value[douyin|openlive] 依然是 1080p/50ms！","turns":[{"turn":1,"user":"今天在公益赛事活动现场，老规矩，用抖音做开直播，帮我把保障开上。","agent":"收到，您是要在抖音开直播，按老规矩来对吧？我调取您的长期配置：画质1080p、时延50ms以内、时长60分钟，从12:30到13:30。确认一下，是按这个开通吗？"},{"turn":2,"user":"今天现场特殊，人流密集网络拥塞，临时把画质调到720p、时延压到30ms，就按这个来。","agent":"好的，已为您按本次临时调整开通：画质720p、时延30ms以内，时长60分钟，12:30到13:30。祝您活动现场直播顺利！"}],"hits":[["preferred_value::douyin | openlive",0.926,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.9144,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["expression::午间例行",0.8037,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"temporary","turns":[1],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"temporary","note":"默认参数偏好：douyin (openlive)"}},{"t":"PREFERENCE_SET","sub":"preferred_value","key":"douyin | openlive","val":"temporary","turns":[2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"720p","latency":"30ms","validity":"temporary","note":"默认参数偏好：douyin (openlive)"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"",0],["expression::午间例行","active",1,1.0,1.0,"",1],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",4,0.985,2.56,"",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,0.961,1.88,"",0],["preferred_value::douyin | openlive","reinforced",4,0.992,2.56,"",1],["scene_preference::周末午休 | kuaishou | video","candidate",1,0.98,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,0.961,1.88,"",0],["service_to_app::meeting","active",1,0.963,1.0,"",0],["service_to_app::openlive","active",1,0.942,1.0,"",0]]},{"idx":10,"sid":"S-USER_001-10","short":"S-10","time":"2026年10月19日12时15分","role":"reuse_session","bp":"event_reuse","tag":"🔵 恢复+新黑话：临时覆盖后次日恢复","sum":"紧接上一场 S-09 临时改 720p/30ms 之后，本场用户说『用抖音做开直播，画质按绝不能有马赛克』。Turn 1 检索出的 preferred_value 依然是 1080p/50ms（证明 S-09 零污染）！Turn 2 用户确认『绝不能有马赛克=1080p』，词典层新增该黑话节点。","turns":[{"turn":1,"user":"老规矩，在公益赛事活动现场，用抖音做开直播，画质按‘绝不能有马赛克’，帮我把保障开上。","agent":"收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"对，直接开通。","agent":"好的，已为您开通抖音开直播保障，画质1080p、时延50ms以内，时长60分钟，12:30到13:30。祝您活动现场直播顺利！"}],"hits":[["preferred_value::douyin | openlive",0.9067,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.8944,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["expression::午间例行",0.8087,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"绝不能有马赛克","val":"long_term","turns":[1],"c":{"alias":"绝不能有马赛克","source_expression":"绝不能有马赛克","target":"1080p","validity":"long_term","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","note":"表达映射：「绝不能有马赛克」-> 1080p"}}],"mems":[["expression::保个基本画质","reinforced",2,1.0,1.55,"",0],["expression::午间例行","active",1,1.0,1.0,"",1],["expression::绝不能有马赛克","active",1,1.0,1.0,"NEW",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",5,1.0,2.76,"+1票",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",2,0.951,1.88,"",0],["preferred_value::douyin | openlive","reinforced",5,1.0,2.76,"+1票",1],["scene_preference::周末午休 | kuaishou | video","candidate",1,0.961,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",2,0.951,1.88,"",0],["service_to_app::meeting","active",1,0.954,1.0,"",0],["service_to_app::openlive","active",1,0.932,1.0,"",0]]},{"idx":11,"sid":"S-USER_001-11","short":"S-11","time":"2026年10月20日18时30分","role":"reuse_session","bp":"sub_01","tag":"🔵 复用：支线1独立复用验证","sum":"用户在大巴转场途中再次开腾讯会议，Turn 1 跨层拼出『720p + 100ms + 18:45-19:45』，证明主线的临时事件与支线1完全正交隔离，支线1升至 3 票。","turns":[{"turn":1,"user":"老规矩，在大巴转场途中，用腾讯会议做会议，画质按‘保个基本画质’，帮我把保障开上。","agent":"收到，我调取到之前登记的腾讯会议会议配置：720p、时延100ms以内，18时45分开始、19时45分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"对，直接开通，稳住节奏。","agent":"好的，已为您开通本次腾讯会议保障，画质720p、时延100ms以内，保障时段2026年10月20日18时45分至19时45分，共60分钟。祝您会议顺利，别掉链子！"}],"hits":[["scene_preference::大巴转场途中 | tencent_meeting | meeting",0.8932,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND scene=大巴转场途中"],["periodic_preference::18:45-19:45 | tencent_meeting:meeting",0.8832,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND time_window=18:45-19:45"],["expression::保个基本画质",0.8501,"[黑话展开: 保个基本画质->720p] [指针跳: periodic_preference[18:45-19:45] -> tencent_meeting|meeting; periodic_preference[tencent_meeting|meeting] -> 18:45-19:45] SELECT WHERE application=tencent_meeting AND business=meeting AND scene=大巴转场途中"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"scene_preference","key":"大巴转场途中 | tencent_meeting | meeting","val":"long_term","turns":[1,2],"c":{"scene":"大巴转场途中","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","resolution":"720p","latency":"100ms","validity":"long_term","note":"场景参数覆写：大巴转场途中 下使用 tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"18:45-19:45 | tencent_meeting:meeting","val":"long_term","turns":[1,2],"c":{"condition":"18:45-19:45","value":"tencent_meeting:meeting","time_window":"18:45-19:45","application":"tencent_meeting","business":"meeting","app_cn":"腾讯会议","service_cn":"会议","validity":"long_term","note":"周期时间路由：18:45-19:45 -> tencent_meeting (meeting)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"保个基本画质","val":"long_term","turns":[1],"c":{"alias":"保个基本画质","source_expression":"保个基本画质","target":"720p","validity":"long_term","application":"tencent_meeting","business":"meeting","scene":"大巴转场途中","app_cn":"腾讯会议","service_cn":"会议","note":"表达映射：「保个基本画质」-> 720p"}}],"mems":[["expression::保个基本画质","reinforced",3,1.0,1.88,"+1票",1],["expression::午间例行","active",1,1.0,1.0,"",0],["expression::绝不能有马赛克","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",5,0.991,2.76,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",3,1.0,2.29,"+1票",1],["preferred_value::douyin | openlive","reinforced",5,0.995,2.76,"",0],["scene_preference::周末午休 | kuaishou | video","candidate",1,0.937,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",3,1.0,2.29,"+1票",1],["service_to_app::meeting","active",1,0.942,1.0,"",0],["service_to_app::openlive","active",1,0.921,1.0,"",0]]},{"idx":12,"sid":"S-USER_001-12","short":"S-12","time":"2026年10月21日10时00分","role":"distractor_session","bp":"distractor","tag":"🟡 隔离：单次钉钉会议干扰","sum":"用户在阶段工作总结会单次使用钉钉开会(720p/80ms)，无长期声明。系统将其隔离在 scene_preference 候选池（status=candidate, 1票），绝不覆写腾讯会议的 meeting 默认路由！","turns":[{"turn":1,"user":"今天上午10点，在阶段工作总结会上用钉钉开个会，画质720p，时延控制在80ms以内，保障30分钟，帮我开通。","agent":"收到，您是要在钉钉上开会议，画质720p，时延80ms以内，保障时间2026年10月21日10时00分至10时30分，共30分钟，已为您开通。祝您总结会顺利！"}],"hits":[],"evts":[{"t":"PREFERENCE_SET","sub":"scene_preference","key":"阶段工作总结会 | dingtalk | meeting","val":"long_term","turns":[1],"c":{"scene":"阶段工作总结会","application":"dingtalk","business":"meeting","app_cn":"钉钉","service_cn":"会议","resolution":"720p","latency":"80ms","validity":"long_term","note":"场景参数覆写：阶段工作总结会 下使用 dingtalk (meeting)","declaration_mode":"implicit"}}],"mems":[["expression::保个基本画质","reinforced",3,1.0,1.88,"",0],["expression::午间例行","active",1,1.0,1.0,"",0],["expression::绝不能有马赛克","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",5,0.986,2.76,"",0],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",3,0.994,2.29,"",0],["preferred_value::douyin | openlive","reinforced",5,0.993,2.76,"",0],["scene_preference::周末午休 | kuaishou | video","candidate",1,0.925,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",3,0.994,2.29,"",0],["scene_preference::阶段工作总结会 | dingtalk | meeting","candidate",1,1.0,1.0,"NEW",0],["service_to_app::meeting","active",1,0.936,1.0,"",0],["service_to_app::openlive","active",1,0.915,1.0,"",0]]},{"idx":13,"sid":"S-USER_001-13","short":"S-13","time":"2026年10月22日12时15分","role":"reuse_session","bp":"main_recovery","tag":"🔵 收官：主线满票强化+新时延黑话","sum":"用户说『用抖音做开直播，时延按别拖沓』，Turn 1 跨层召回 1080p/50ms/12:30-13:30，Turn 2 确认『别拖沓=50ms』沉淀入词典层，主线达 6 票满状态！","turns":[{"turn":1,"user":"老规矩，在常规周期保障现场，用抖音做开直播，时延按‘别拖沓’，帮我把保障开上。","agent":"收到，我调取到之前登记的抖音开直播配置：1080p、时延50ms以内，12时30分开始、13时30分结束，持续60min。确认按这套配置开通吗？"},{"turn":2,"user":"对，直接开通，稳住节奏。","agent":"好的，已为您开通本次抖音直播保障，画质1080p、时延50ms以内，保障时段2026年10月22日12时30分至13时30分，共60分钟。祝您直播顺利，别掉链子！"}],"hits":[["preferred_value::douyin | openlive",0.9275,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"],["periodic_preference::12:30-13:30 | douyin:openlive",0.9153,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive AND time_window=12:30-13:30"],["expression::午间例行",0.8137,"[指针跳: periodic_preference[12:30-13:30] -> douyin|openlive; periodic_preference[douyin|openlive] -> 12:30-13:30] SELECT WHERE application=douyin AND business=openlive"]],"evts":[{"t":"PREFERENCE_CONFIRM","sub":"preferred_value","key":"douyin | openlive","val":"long_term","turns":[1,2],"c":{"application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","resolution":"1080p","latency":"50ms","validity":"long_term","note":"默认参数偏好：douyin (openlive)","declaration_mode":"explicit"}},{"t":"PREFERENCE_CONFIRM","sub":"periodic_preference","key":"12:30-13:30 | douyin:openlive","val":"long_term","turns":[1,2],"c":{"condition":"12:30-13:30","value":"douyin:openlive","time_window":"12:30-13:30","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","validity":"long_term","note":"周期时间路由：12:30-13:30 -> douyin (openlive)","declaration_mode":"explicit"}},{"t":"EXPRESSION_ALIAS","sub":"expression","key":"别拖沓","val":"long_term","turns":[1],"c":{"alias":"别拖沓","source_expression":"别拖沓","target":"50ms","validity":"long_term","application":"douyin","business":"openlive","app_cn":"抖音","service_cn":"开直播","note":"表达映射：「别拖沓」-> 50ms"}}],"mems":[["expression::保个基本画质","reinforced",3,1.0,1.88,"",0],["expression::别拖沓","active",1,1.0,1.0,"NEW",0],["expression::午间例行","active",1,1.0,1.0,"",1],["expression::绝不能有马赛克","active",1,1.0,1.0,"",0],["periodic_preference::12:30-13:30 | douyin:openlive","reinforced",6,1.0,2.92,"+1票",1],["periodic_preference::18:45-19:45 | tencent_meeting:meeting","reinforced",3,0.985,2.29,"",0],["preferred_value::douyin | openlive","reinforced",6,1.0,2.92,"+1票",1],["scene_preference::周末午休 | kuaishou | video","candidate",1,0.905,1.0,"",0],["scene_preference::大巴转场途中 | tencent_meeting | meeting","reinforced",3,0.985,2.29,"",0],["scene_preference::阶段工作总结会 | dingtalk | meeting","candidate",1,0.978,1.0,"",0],["service_to_app::meeting","active",1,0.925,1.0,"",0],["service_to_app::openlive","active",1,0.905,1.0,"",0]]}]};
+    let curIdx = 2; // Default to S-03 (first reinforcement session where search + induction both happen!)
+
+    const LAYER_META = [
+      { sub: "preferred_value", label: "🎯 1. 默认参数层 (preferred_value)" },
+      { sub: "scene_preference", label: "🚌 2. 场景参数覆写层 (scene_preference)" },
+      { sub: "periodic_preference", label: "⏰ 3. 周期时间路由层 (periodic_preference)" },
+      { sub: "service_to_app", label: "🧭 4. 业务默认应用路由层 (service_to_app)" },
+      { sub: "expression", label: "🗣️ 5. 个性化黑话词典层 (expression)" }
+    ];
+
+    function switchMainView(v) {
+      document.getElementById('main-view-0').classList.toggle('hidden', v !== 0);
+      document.getElementById('main-view-1').classList.toggle('hidden', v !== 1);
+      document.getElementById('view-btn-0').className = v === 0
+        ? "px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600 text-white transition"
+        : "px-2.5 py-1 rounded-md text-xs font-medium bg-slate-200 text-slate-800 transition";
+      document.getElementById('view-btn-1').className = v === 1
+        ? "px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600 text-white transition"
+        : "px-2.5 py-1 rounded-md text-xs font-medium bg-slate-200 text-slate-800 transition";
+    }
+
+    function stepDelta(d) {
+      const next = curIdx + d;
+      if (next >= 0 && next < DATA.steps.length) {
+        selectStep(next);
+      }
+    }
+
+    function formatPayloadSummary(sub, c) {
+      if (sub === "preferred_value" || sub === "scene_preference") {
+        return `画质=${c.resolution || '-'}, 时延=${c.latency || '-'}` + (c.scene ? ` (场景:${c.scene})` : ' (通用默认)');
+      }
+      if (sub === "periodic_preference") {
+        return `时段=${c.time_window || c.condition} → ${c.value}`;
+      }
+      if (sub === "service_to_app") {
+        return `业务=${c.business} → 默认应用=${c.application}`;
+      }
+      if (sub === "expression") {
+        return `「${c.alias}」 → 标准值=${c.target}`;
+      }
+      return JSON.stringify(c);
+    }
+
+    function renderTimeline() {
+      const box = document.getElementById('timeline-btns');
+      box.innerHTML = DATA.steps.map((s, i) => {
+        const active = i === curIdx;
+        const icon = s.tag.slice(0, 2);
+        const cls = active
+          ? "px-2 py-1 rounded text-xs font-bold bg-indigo-600 text-white shadow-sm"
+          : "px-2 py-1 rounded text-xs font-medium bg-slate-50 border border-slate-200 hover:border-indigo-600";
+        return `<button onclick="selectStep(${i})" class="${cls}">${icon}${s.short}</button>`;
+      }).join('');
+    }
+
+    function selectStep(idx) {
+      curIdx = idx;
+      renderTimeline();
+      const s = DATA.steps[idx];
+      document.getElementById('sess-title').textContent = `${s.sid}（第 ${s.idx}/13 场会话）`;
+      document.getElementById('sess-tag').textContent = s.tag;
+      document.getElementById('sess-meta').textContent = `🕒 会话时间：${s.time} | role=${s.role} | blueprint=${s.bp}`;
+      document.getElementById('sess-summary').textContent = s.sum;
+
+      // 1. Render dialogue turns
+      const dBox = document.getElementById('dialogue-box');
+      dBox.innerHTML = s.turns.map(t => `
+        <div class="space-y-1 p-2 rounded bg-white border border-slate-200">
+          <div class="flex gap-1.5">
+            <span class="font-bold text-indigo-600 shrink-0">[Turn ${t.turn} 用户]</span>
+            <span>${t.user}</span>
+          </div>
+          <div class="flex gap-1.5 text-slate-500 pt-1 border-t border-slate-200">
+            <span class="font-semibold shrink-0">[Turn ${t.turn} 客服]</span>
+            <span>${t.agent}</span>
+          </div>
+        </div>
+      `).join('');
+
+      // 2. Render Turn 1 search hits
+      const sBox = document.getElementById('search-box');
+      document.getElementById('hit-count-badge').textContent = s.hits.length ? `命中 ${s.hits.length} 个正交节点` : `本场无前置检索`;
+      if (!s.hits.length) {
+        const reason = s.role === 'evidence_session'
+          ? '本场是首次建联会话（用户在台词中直接说出了参数），无需从历史记忆补全槽位。'
+          : '本场是纯干扰/单轮直办会话，未触发老规矩长期记忆检索。';
+        sBox.innerHTML = `<div class="p-2 rounded bg-white border border-slate-200 text-slate-500">${reason}</div>`;
+      } else {
+        sBox.innerHTML = s.hits.map((h, hi) => {
+          const [mk, sc, matchStr] = h;
+          const def = DATA.defs[mk] || { sub: mk.split('::')[0], key: mk.split('::')[1], c: {} };
+          return `
+            <div class="p-2 rounded bg-white border border-slate-200 space-y-0.5">
+              <div class="flex items-center justify-between font-mono">
+                <span class="font-bold text-indigo-600">#${hi+1} [${def.sub}] ${def.key}</span>
+                <span class="px-1.5 py-0.5 rounded bg-slate-50">score=${sc}</span>
+              </div>
+              <div class="font-semibold">提供净荷：${formatPayloadSummary(def.sub, def.c)}</div>
+              <div class="text-slate-500 font-mono text-[11px]">${matchStr}</div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      // 3. Render extracted events
+      const eBox = document.getElementById('events-box');
+      document.getElementById('evt-count-badge').textContent = `${s.evts.length} 个事件`;
+      if (!s.evts.length) {
+        eBox.innerHTML = `<div class="p-2 rounded bg-white border border-slate-200 text-slate-500">本场为纯域外拒识会话，未抽取任何记忆事件。</div>`;
+      } else {
+        eBox.innerHTML = s.evts.map(e => {
+          const isTemp = e.val === 'temporary';
+          const badge = isTemp
+            ? `<span class="px-1.5 py-0.5 rounded bg-slate-200 font-bold">🛑 temporary (门控拦截)</span>`
+            : `<span class="px-1.5 py-0.5 rounded bg-slate-200 font-mono">${e.t}</span>`;
+          return `
+            <div class="p-2 rounded bg-white border ${isTemp ? 'border-2 border-indigo-600' : 'border-slate-200'} space-y-1">
+              <div class="flex items-center justify-between gap-1 flex-wrap">
+                <span class="font-mono font-bold text-indigo-600">[${e.sub}]</span>
+                ${badge}
+              </div>
+              <div class="font-mono font-semibold">${e.key}</div>
+              <div class="text-slate-500">${formatPayloadSummary(e.sub, e.c)}</div>
+              ${isTemp ? `<div class="font-semibold text-indigo-600">💡 门控保护：识别为单次临时调整，严禁覆写长期记忆库！</div>` : ''}
+            </div>
+          `;
+        }).join('');
+      }
+
+      // 4. Render 5-layer memory bank snapshot
+      const mBox = document.getElementById('membank-box');
+      document.getElementById('mem-count-badge').textContent = `共 ${s.mems.length} 个节点`;
+      const grouped = {};
+      LAYER_META.forEach(l => grouped[l.sub] = []);
+      s.mems.forEach(m => {
+        const [mk, st, v, R, S, diff, hit] = m;
+        const def = DATA.defs[mk];
+        if (def && grouped[def.sub]) {
+          grouped[def.sub].push({ mk, def, st, v, R, S, diff, hit });
+        }
+      });
+
+      mBox.innerHTML = LAYER_META.map(layer => {
+        const items = grouped[layer.sub] || [];
+        if (!items.length) {
+          return `
+            <div class="p-2 rounded bg-white border border-slate-200 opacity-60">
+              <div class="font-semibold">${layer.label}</div>
+              <div class="text-slate-500">（截至本场尚未建立）</div>
+            </div>
+          `;
+        }
+        return `
+          <div class="p-2 rounded bg-white border border-slate-200 space-y-1.5">
+            <div class="font-semibold text-indigo-600">${layer.label} (${items.length})</div>
+            ${items.map(it => {
+              const highlight = it.diff || it.hit ? 'border-2 border-indigo-600' : 'border border-slate-200';
+              return `
+                <div onclick="inspectDiskNode('${it.mk}')" class="cursor-pointer p-1.5 rounded bg-slate-50 ${highlight} space-y-0.5 hover:opacity-90">
+                  <div class="flex items-center justify-between gap-1 flex-wrap font-mono">
+                    <span class="font-bold">${it.def.key}</span>
+                    <div class="flex items-center gap-1">
+                      ${it.hit ? `<span class="px-1 rounded bg-indigo-600 text-white text-[10px]">🎯本场命中</span>` : ''}
+                      ${it.diff === 'NEW' ? `<span class="px-1 rounded bg-indigo-600 text-white text-[10px]">🟢本场新增</span>` : (it.diff ? `<span class="px-1 rounded bg-slate-200 font-bold text-[10px]">🔼${it.diff}</span>` : '')}
+                      <span class="text-[11px] text-slate-500">${it.st}(${it.v}票, R=${it.R})</span>
+                    </div>
+                  </div>
+                  <div class="text-slate-500">${formatPayloadSummary(it.def.sub, it.def.c)}</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderDiskList() {
+      const listBox = document.getElementById('disk-node-list');
+      const keys = Object.keys(DATA.defs);
+      listBox.innerHTML = keys.map(mk => {
+        const d = DATA.defs[mk];
+        return `
+          <div onclick="showDiskJson('${mk}')" class="cursor-pointer p-1.5 rounded bg-white border border-slate-200 hover:border-indigo-600 font-mono">
+            <div class="font-bold text-indigo-600">[${d.sub}] ${d.key}</div>
+            <div class="text-slate-500">${formatPayloadSummary(d.sub, d.c)}</div>
+          </div>
+        `;
+      }).join('');
+      if (keys.length) showDiskJson(keys[0]);
+    }
+
+    function showDiskJson(mk) {
+      const d = DATA.defs[mk];
+      if (!d) return;
+      document.getElementById('disk-json-title').textContent = `📄 [${d.sub}] ${d.key} (memory_id=${d.id})`;
+      document.getElementById('disk-json-pre').textContent = JSON.stringify(d, null, 2);
+    }
+
+    function inspectDiskNode(mk) {
+      switchMainView(1);
+      showDiskJson(mk);
+    }
+
+    renderTimeline();
+    renderDiskList();
+    selectStep(2); // Start at S-03 so user immediately sees Dialogue + Search + Induction in action!
+  </script>
+</body>
+</html>

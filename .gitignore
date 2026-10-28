@@ -2,8 +2,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
-.agents/
-.lavish/
 data_root/
 data_roots_8902_v7/
 data_storage_cross_sample_test/
