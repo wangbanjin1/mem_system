@@ -489,6 +489,22 @@ class MemorySystem:
         if crystallized_exp_id and crystallized_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
             is_non_pref = True
             card = dict(_BUILTIN_EXPERIENCE_TEMPLATES[crystallized_exp_id])
+            rec_adj = dict(card.get("recommended_adjustments") or {})
+            if crystallized_exp_id == "EXP_PREWARM_BUFFER_01":
+                m_min = re.search(r"提前\s*(\d+)\s*分钟", u_later_text)
+                if m_min:
+                    buf_m = int(m_min.group(1))
+                elif "提前一个半小时" in u_later_text or "提前1.5小时" in u_later_text:
+                    buf_m = 90
+                elif "提前一小时" in u_later_text or "提前1小时" in u_later_text or "提前1个小时" in u_later_text:
+                    buf_m = 60
+                elif "提前一刻钟" in u_later_text:
+                    buf_m = 15
+                else:
+                    buf_m = 30
+                rec_adj["start_offset_minutes"] = -buf_m
+                rec_adj["duration_add_minutes"] = buf_m
+            card["recommended_adjustments"] = rec_adj
             card["event_time"] = session_ts
             card["source_session_id"] = session_id
             nodes = self.ingest_experience_cards(ns.tenant_id, ns.user_id, [card])
@@ -525,6 +541,10 @@ class MemorySystem:
         if applied_exp_id and applied_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
             is_non_pref = True
             card = dict(_BUILTIN_EXPERIENCE_TEMPLATES[applied_exp_id])
+            if applied_exp_id in active_exps and isinstance(active_exps[applied_exp_id].content, dict):
+                stored_adj = active_exps[applied_exp_id].content.get("recommended_adjustments")
+                if isinstance(stored_adj, dict):
+                    card["recommended_adjustments"] = dict(stored_adj)
             card["event_time"] = session_ts
             card["source_session_id"] = session_id
             nodes = self.ingest_experience_cards(ns.tenant_id, ns.user_id, [card])
