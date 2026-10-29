@@ -142,19 +142,18 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "experience_id": "EXP_ORDER_QUALITY_DISAMBIGUATION_01",
         "domain": "order_disambiguation",
         "strategy_type": "historical_order_duration_disambiguation",
-        "title": "历史意图保障单模糊指代（过滤前天1小时临时短单、优选上周2小时正式路演单）消歧经验",
-        "condition": "用户在展区/外场办正式客户路演并要求‘按上次办的保障单排时长’，且账本中存在前天1小时(60min)临时短会单与上周2小时(120min)正式路演长单",
-        "action": "过滤时间最近但属临时插曲的前天60min短单，优选匹配上周同为正式客户路演的120min长单（顺延结束时间保满2小时）",
+        "title": "历史意图保障单模糊指代（过滤近期临时短单、优选上周正式路演单）消歧经验",
+        "condition": "用户在展区/外场办正式客户路演并要求‘按上次办的保障单排时长’，且账本中存在近期临时短会单与上周正式路演单",
+        "action": "过滤时间最近但属临时插曲的短单，优选匹配上周同为正式客户路演的正式工单时长",
         "trigger_conditions": {
             "location_keywords": ["外摆区", "拜访点", "商圈", "展会", "外访", "现场", "展区", "财富管理中心"],
             "task_keywords": ["上次", "意图保障单", "路演", "客户"],
         },
         "recommended_adjustments": {
-            "duration": "120min",
             "prefer_formal_duration_over_recent_temp": True,
         },
         "crystallize_trigger": {
-            "later_turns": [["前天那笔", "临时插空", "临时短会", "临时短单"], ["正式路演", "改成2个小时", "2个小时", "两个小时", "正式单"]],
+            "later_turns": [["前天那笔", "临时插空", "临时短会", "临时短单"], ["正式路演", "正式单", "上周那笔", "改成"]],
         },
         "apply_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
         "bridge_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
