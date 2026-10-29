@@ -25,6 +25,10 @@ _TEMP_VETO_WORDS = (
     "临时调",
     "临时改",
     "先临时",
+    "今天不用",
+    "这次不用",
+    "今天改在",
+    "今天改用",
 )
 
 _STRONG_LONG_TERM_WORDS = (
@@ -305,6 +309,7 @@ class Extractor:
                 continue
             ev = self._parse_raw_event(raw_ev, session_id=session_id, user_id=user_id, tenant_id=tenant_id)
             self._backfill_time_window(ev, numbered_turns)
+            self._backfill_qos_params(ev, numbered_turns)
             self._normalize_validity(ev, numbered_turns)
             if self.validate(ev, numbered_turns):
                 valid_events.append(ev)
@@ -431,8 +436,8 @@ class Extractor:
                 event.content.pop("time_window", None)
                 return event
 
-        existing_tw = event.content.get("time_window")
-        if existing_tw and str(existing_tw).strip():
+        existing_tw = str(event.content.get("time_window") or "").strip()
+        if existing_tw and re.match(r"^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$", existing_tw):
             return event
         if event.subtype == "expression" or event.event_type == EventType.EXPRESSION_ALIAS.value:
             return event
@@ -487,6 +492,44 @@ class Extractor:
             if tw:
                 event.content["time_window"] = tw
                 return event
+
+        return event
+
+    def _backfill_qos_params(self, event: Event, session_turns: List[Dict[str, Any]]) -> Event:
+        """Deterministic regex backfill for resolution and latency when LLM omits them."""
+        if event.subtype == "expression" or event.event_type == EventType.EXPRESSION_ALIAS.value:
+            return event
+        if event.content.get("resolution") and event.content.get("latency"):
+            return event
+        numbered = self._ensure_turn_numbers(session_turns)
+        user_texts = [
+            str(t.get("content") or t.get("text") or "")
+            for t in numbered
+            if str(t.get("role", "user")).lower() == "user"
+        ]
+        other_texts = [
+            str(t.get("content") or t.get("text") or "")
+            for t in numbered
+            if str(t.get("role", "user")).lower() != "user"
+        ]
+        combined_user = " ".join(user_texts)
+        combined_all = " ".join(user_texts + other_texts)
+
+        if not event.content.get("resolution"):
+            m_res = re.search(
+                r"\b(360p|480p|540p|720p|1080p|2160p|2k|4k)\b", combined_user, re.IGNORECASE
+            ) or re.search(
+                r"\b(360p|480p|540p|720p|1080p|2160p|2k|4k)\b", combined_all, re.IGNORECASE
+            )
+            if m_res:
+                event.content["resolution"] = m_res.group(1).lower()
+
+        if not event.content.get("latency"):
+            m_lat = re.search(r"(\d+)\s*(?:ms|毫秒)", combined_user, re.IGNORECASE) or re.search(
+                r"(\d+)\s*(?:ms|毫秒)", combined_all, re.IGNORECASE
+            )
+            if m_lat:
+                event.content["latency"] = f"{m_lat.group(1)}ms"
 
         return event
 

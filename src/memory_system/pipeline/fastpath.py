@@ -39,6 +39,14 @@ _ALIAS_RULE_PATTERNS = [
     re.compile(
         r"(?:以后|默认|平时)?(?:我)?(?:一)?说[“\"‘'「『]?([^”\"’'」』，,。]{2,16})[”\"’'」』]?[，,\s]*(?:就是|代表|指的就是|指的是|意思是|等于)([^。！!，,\n]{2,32})"
     ),
+    re.compile(
+        r"(?:画质|清晰度|分辨率)(?:按|要)?\s*([^，,。！!；;\s]{2,12}?)(?:就行|即可|就可以)?[，,\s]*(?:档位)?按\s*(360p|480p|540p|720p|1080p|2160p|2k|4k)\s*(?:开|来|算|控制)?[，,\s]*(?:以后|往后)(?:也|都)?照这个标准(?:理解|记)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:时延|延迟)(?:要|按)?\s*([^，,。！!；;\s]{2,12}?)(?:就行|即可|就可以)?[，,\s]*(?:上限)?按\s*(\d+\s*(?:ms|毫秒))\s*(?:控制|开|来|算)?[，,\s]*(?:以后|往后)(?:也|都)?照这个标准(?:理解|记)",
+        re.IGNORECASE,
+    ),
 ]
 
 # Multi-turn disambiguation: agent asks "您说的‘X’具体指..." and user confirms "对，就是画质档位720p..."
@@ -113,22 +121,48 @@ class FastPathProcessor:
         return default
 
     def _detect_app_and_biz(self, text: str) -> Tuple[Optional[str], Optional[str]]:
-        low = text.lower()
+        cleaned = re.sub(r"(?:今天|这次|本次|先)?(?:不用|不开|不走|别用)[^，,。；;！!]*", "", text or "")
+        low_clean = (cleaned or text).lower()
+        low_full = (text or "").lower()
         found_app: Optional[str] = None
         for alias, canonical in self._alias_to_app:
-            if alias.lower() in low:
+            if alias.lower() in low_clean:
                 found_app = canonical
                 break
+        if found_app is None:
+            for alias, canonical in self._alias_to_app:
+                if alias.lower() in low_full:
+                    found_app = canonical
+                    break
         found_biz: Optional[str] = None
         for alias, canonical_biz in self._alias_to_biz:
-            if alias.lower() in low:
+            if alias.lower() in low_clean:
                 found_biz = canonical_biz
                 break
+        if found_biz is None:
+            for alias, canonical_biz in self._alias_to_biz:
+                if alias.lower() in low_full:
+                    found_biz = canonical_biz
+                    break
         return found_app, found_biz
 
     @staticmethod
     def _detect_validity(text: str) -> str:
-        if any(w in text for w in ("临时", "暂时", "今天先", "这次先", "就今天", "就这次")):
+        if any(
+            w in text
+            for w in (
+                "临时",
+                "暂时",
+                "今天先",
+                "这次先",
+                "就今天",
+                "就这次",
+                "今天不用",
+                "这次不用",
+                "今天改在",
+                "今天改用",
+            )
+        ):
             return "temporary"
         return "long_term"
 
@@ -327,6 +361,12 @@ class FastPathProcessor:
                     "note": txt,
                 }
                 self._extract_inline_params(txt, content)
+                if validity != "temporary":
+                    tmp_full: Dict[str, Any] = {}
+                    self._extract_inline_params(full_user_text, tmp_full)
+                    for k_miss in ("resolution", "latency", "time_window", "priority"):
+                        if not content.get(k_miss) and tmp_full.get(k_miss):
+                            content[k_miss] = tmp_full[k_miss]
                 res.confirmed.append(
                     Event(
                         event_type=EventType.PREFERENCE_SET.value,
@@ -338,6 +378,52 @@ class FastPathProcessor:
                         source_session_id=session_id,
                         evidence_turns=[turn_no],
                         is_concession=is_conc,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                    )
+                )
+
+        # 5. Cross-turn fallback: if no preference event was emitted from any user turn,
+        # and user only mentioned biz with a habit/reinforcement reference while assistant confirmed app (e.g. S-USER_016-03, S-USER_026-03)
+        has_pref_ev = any(
+            ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
+            for ev in res.confirmed
+        )
+        if not has_pref_ev and len(user_turns) >= 2:
+            u_app, u_biz = self._detect_app_and_biz(full_user_text)
+            full_all_text = " ".join(
+                str(t.get("content") or t.get("text") or "") for t in numbered_turns
+            )
+            if not u_app or not u_biz:
+                a_app, a_biz = self._detect_app_and_biz(full_all_text)
+                u_app = u_app or a_app
+                u_biz = u_biz or a_biz
+            if u_app and u_biz and self._is_supported(u_app, u_biz):
+                val_all = self._detect_validity(full_user_text)
+                c_all: Dict[str, Any] = {
+                    "application": u_app,
+                    "business": u_biz,
+                    "validity": val_all,
+                    "note": full_user_text,
+                }
+                self._extract_inline_params(full_user_text, c_all)
+                if val_all != "temporary":
+                    tmp_a: Dict[str, Any] = {}
+                    self._extract_inline_params(full_all_text, tmp_a)
+                    for k_miss in ("resolution", "latency", "time_window", "priority"):
+                        if not c_all.get(k_miss) and tmp_a.get(k_miss):
+                            c_all[k_miss] = tmp_a[k_miss]
+                res.confirmed.append(
+                    Event(
+                        event_type=EventType.PREFERENCE_CONFIRM.value,
+                        subtype="application_business",
+                        memory_key_fields={"application": u_app, "business": u_biz},
+                        content=c_all,
+                        validity=val_all,
+                        confidence=0.9,
+                        source_session_id=session_id,
+                        evidence_turns=[user_turns[-1][0]],
+                        is_concession=res.has_concession,
                         user_id=user_id,
                         tenant_id=tenant_id,
                     )

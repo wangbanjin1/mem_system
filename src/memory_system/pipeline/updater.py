@@ -333,8 +333,18 @@ class MemoryUpdater:
                 break
 
         # 3. Merge non-empty values into node.content
+        # Protect already-active/reinforced nodes from having their core QoS/routing fields
+        # overwritten by an implicit single-task event (unless it is an explicit PREFERENCE_CORRECT).
+        is_implicit_non_corr = (
+            node.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value)
+            and incoming_content.get("declaration_mode") == "implicit"
+            and event.event_type != EventType.PREFERENCE_CORRECT.value
+        )
+        protected_fields = {"resolution", "latency", "time_window", "condition", "value"}
         for k, v in incoming_content.items():
             if v not in (None, "", [], {}):
+                if is_implicit_non_corr and k in protected_fields and node.content.get(k) not in (None, ""):
+                    continue
                 node.content[k] = v
 
         if has_new_note_or_change or not node.description:

@@ -22,6 +22,7 @@ from .pipeline.updater import MemoryUpdater, normalize_ts_str
 from .providers.embedding import EmbeddingProvider
 from .providers.llm import LLMProvider
 from .core.experience_rules import trigger_matches
+from .core.working_rules import classify_working_record_reference
 from .retrieval.router import QueryRouter
 from .retrieval.search import SearchEngine
 from .storage.filestore import FileStore
@@ -85,8 +86,10 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "later_turns": [["预热", "提前半小时", "提前30分钟"]],
         },
         "bridge_trigger": {"first_turn": [["重大活动保障", "重要现场保障"]]},
-        # Offset-type experience must not be applied before it is crystallized (learning session answers literally)
+        # An experience is only applied after it has been learned (crystallized) for this user
         "bridge_requires_active": True,
+        # The learned rule applies from the NEXT session on: in the learning session the confirmed slots stay as-is
+        "learning_keeps_current_state": True,
     },
     "EXP_MULTI_INTENT_PARTITION_01": {
         "experience_id": "EXP_MULTI_INTENT_PARTITION_01",
@@ -109,6 +112,7 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         },
         "apply_trigger": {"first_turn": [["对一下", "对词", "对直播词"], ["机位", "镜头"]]},
         "bridge_trigger": {"first_turn": [["对一下", "对词", "对直播词"], ["词", "机位", "镜头"]]},
+        "learning_keeps_current_state": True,
     },
     "EXP_CALENDAR_HOLIDAY_EXCEPTION_01": {
         "experience_id": "EXP_CALENDAR_HOLIDAY_EXCEPTION_01",
@@ -132,6 +136,7 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         },
         "apply_trigger": {"first_turn": [["@HOLIDAY_DATE", "国庆", "法定假", "节假日"], ["例行周会", "例会", "周会"]]},
         "bridge_trigger": {"first_turn": [["@HOLIDAY_DATE"], ["国庆", "法定假", "节假日", "放假", "假期", "例行周会", "例会", "周会"]]},
+        "learning_keeps_current_state": True,
     },
     "EXP_ORDER_QUALITY_DISAMBIGUATION_01": {
         "experience_id": "EXP_ORDER_QUALITY_DISAMBIGUATION_01",
@@ -153,6 +158,7 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         },
         "apply_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
         "bridge_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
+        "learning_keeps_current_state": True,
     },
     "EXP_OVERLAPPING_ORDER_RESOLUTION_01": {
         "experience_id": "EXP_OVERLAPPING_ORDER_RESOLUTION_01",
@@ -174,6 +180,7 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         },
         "apply_trigger": {"first_turn": [["连麦嘉宾"], ["直播间"]]},
         "bridge_trigger": {"first_turn": [["连麦嘉宾"]]},
+        "learning_keeps_current_state": True,
     },
 }
 
@@ -536,10 +543,9 @@ class MemorySystem:
             return is_non_pref, events_out, node_ids_out
 
         # 3. Working Memory Reuse / Reschedule / Disambiguation
-        is_wr_reuse = bool(
-            re.search(r"(上周|上个月初|之前).*?意图保障单规格", u1_text)
-            or re.search(r"把昨天预约的.+?保障(往后推迟|提前)", u1_text)
-        )
+        # Dialogue-act regex families (core/working_rules.py) instead of fixed sample sentences
+        wr_act = classify_working_record_reference(u1_text)
+        is_wr_reuse = wr_act is not None
         if is_wr_reuse:
             is_non_pref = True
             wr_nodes = [
@@ -550,7 +556,7 @@ class MemorySystem:
             if wr_nodes:
                 # Match target working record: for reschedule ("昨天预约的"), pick latest; for reuse ("上周"/"上个月初"), pick earliest matching location
                 wr_nodes.sort(key=lambda x: str(x.content.get("record_id") or x.created_at or ""))
-                is_resched = "昨天预约的" in u1_text
+                is_resched = wr_act == "reschedule"
                 # Prefer records whose stored location is mentioned in the utterance (no fixed index assumption)
                 loc_hits = [
                     n for n in wr_nodes
@@ -617,13 +623,18 @@ class MemorySystem:
         # Separate preference events vs expression alias events (deduplicating aliases)
         pref_events: List[Event] = []
         alias_by_key: Dict[str, Event] = {}
+        llm_pref_events = [
+            ev
+            for ev in llm_events
+            if ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
+        ]
 
         for ev in fp_events:
             if ev.event_type == EventType.EXPRESSION_ALIAS.value or ev.subtype == "expression":
                 al = str(ev.memory_key_fields.get("alias") or ev.content.get("alias") or "").strip()
                 if al:
                     alias_by_key[al] = ev
-            elif not llm_events:
+            elif not llm_pref_events:
                 pref_events.append(ev)
 
         for ev in llm_events:
@@ -643,6 +654,7 @@ class MemorySystem:
             if has_concession:
                 ev.is_concession = True
             self.extractor._backfill_time_window(ev, turns)
+            self.extractor._backfill_qos_params(ev, turns)
             self.extractor._normalize_validity(ev, turns)
             ev.content["validity"] = ev.validity
 
@@ -786,9 +798,15 @@ class MemorySystem:
         # match wins, so e.g. two distinct venues sharing a prefix are never collapsed into one).
         scene = self._align_scene_with_known(ns, scene, user_text)
 
-        # One-off event venues / routine-period phrases should not fork a long-term scene node
+        # One-off event venues / routine-period phrases / task clauses should not fork a long-term scene node
         if scene and any(marker in scene for marker in _TRANSIENT_SCENE_MARKERS):
             scene = ""
+        if scene and re.search(r"从\d|分到\d|持续|小时|分钟|上要|处理|开展|进行|今天在", scene):
+            scene = self._extract_clean_venue(user_text)
+        elif not scene:
+            scene = self._extract_clean_venue(user_text)
+            if scene and any(marker in scene for marker in _TRANSIENT_SCENE_MARKERS):
+                scene = ""
 
         # Check existing non-expired/non-archived parameter nodes (scene_preference / preferred_value) for (app, biz)
         existing_param: Optional[MemoryNode] = None
@@ -862,6 +880,14 @@ class MemorySystem:
             "app_cn": app_cn,
             "service_cn": service_cn,
         }
+        if (
+            existing_param is not None
+            and ev.validity != "temporary"
+            and ev.event_type != EventType.PREFERENCE_CORRECT.value
+        ):
+            for k in ("resolution", "latency", "priority", "bitrate"):
+                if existing_param.content.get(k) not in (None, ""):
+                    qos_fields[k] = existing_param.content[k]
         for k in ("resolution", "latency", "priority", "bitrate"):
             if ev.content.get(k) not in (None, ""):
                 qos_fields[k] = ev.content[k]
@@ -871,18 +897,16 @@ class MemorySystem:
         # --- Layer 1: Parameter Event (scene_preference OR preferred_value, NEVER with time_window) ---
         if (
             existing_param is not None
-            and existing_param.subtype == "preferred_value"
             and existing_param.stats.votes == 1
             and scene
+            and (
+                existing_param.subtype == "preferred_value"
+                or existing_param.content.get("scene") != scene
+            )
             and ev.validity != "temporary"
         ):
-            # Upgrade 1-vote candidate `preferred_value` into `scene_preference` when scene is confirmed
-            merged_qos = {
-                k: existing_param.content[k]
-                for k in ("resolution", "latency", "priority", "bitrate")
-                if existing_param.content.get(k) not in (None, "")
-            }
-            merged_qos.update(qos_fields)
+            # Upgrade 1-vote candidate into `scene_preference` when scene is confirmed
+            merged_qos = dict(qos_fields)
 
             self.filestore.delete_node(ns, existing_param)
             self.index.delete(existing_param.memory_id)
@@ -1037,11 +1061,16 @@ class MemorySystem:
 
         # --- Layer 2: Orthogonal Time Routing Event (periodic_preference, NEVER with QoS parameters or scene) ---
         cond_tw = tw
-        if not cond_tw and existing_periodic is not None and ev.event_type == EventType.PREFERENCE_CONFIRM.value:
+        if not cond_tw and existing_periodic is not None and ev.validity != "temporary":
             cond_tw = str(existing_periodic.content.get("time_window") or existing_periodic.content.get("condition") or "").strip()
 
         if cond_tw and ev.validity != "temporary":
             val_str = f"{app}:{biz}"
+            pp_ev_type = (
+                EventType.PREFERENCE_CONFIRM.value
+                if (existing_periodic is not None and existing_periodic.content.get("time_window") == cond_tw and ev.event_type == EventType.PREFERENCE_SET.value)
+                else ev.event_type
+            )
             pp_content: Dict[str, Any] = {
                 "condition": cond_tw,
                 "value": val_str,
@@ -1057,7 +1086,7 @@ class MemorySystem:
                 pp_content["declaration_mode"] = decl_mode
             out_events.append(
                 Event(
-                    event_type=ev.event_type,
+                    event_type=pp_ev_type,
                     subtype="periodic_preference",
                     memory_key_fields={"condition": cond_tw, "value": val_str},
                     content=pp_content,
@@ -1073,6 +1102,24 @@ class MemorySystem:
             )
 
         return out_events
+
+    @staticmethod
+    def _extract_clean_venue(user_text: str) -> str:
+        """Extract a clean physical venue name from '在<venue>办/开/做...' clauses without task/time tails."""
+        loc_re = re.compile(
+            r"(?:在|到)([\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9]{2,20}?)"
+            r"(?=这边|这儿|那边|那儿|这里|，|,|。|；|！|\s|办|开|用|做|搞|弄|准备|帮我|给|跟|要|有|了|拍|带队|打算|想|日常|连线|直播|会议|通话)"
+        )
+        pronouns = {"这儿", "这边", "那边", "那儿", "这里", "那里", "线上", "路上", "现场"}
+        for m in loc_re.finditer(user_text or ""):
+            cand = m.group(1).strip()
+            if (
+                cand in pronouns
+                or re.search(r"\d|ms|以内|以下|时|分钟|小时|之前|上次|上周|常规|周期|上午|下午|晚上|中午", cand)
+            ):
+                continue
+            return cand
+        return ""
 
     def _align_scene_with_known(self, ns: Namespace, scene: str, user_text: str) -> str:
         """Reuse an existing scene name of this user when it literally occurs in the user's text.
