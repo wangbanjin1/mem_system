@@ -21,6 +21,7 @@ from .pipeline.sanitizer import CaseSanitizer
 from .pipeline.updater import MemoryUpdater, normalize_ts_str
 from .providers.embedding import EmbeddingProvider
 from .providers.llm import LLMProvider
+from .core.experience_rules import trigger_matches
 from .retrieval.router import QueryRouter
 from .retrieval.search import SearchEngine
 from .storage.filestore import FileStore
@@ -48,6 +49,16 @@ _STRATEGY_TO_DOMAIN_MAP: Dict[str, str] = {
 }
 
 
+# Category markers (not sample venue names) for one-off event venues that must not fork scene nodes.
+_TRANSIENT_SCENE_MARKERS = ("活动现场", "展会现场", "赛事现场", "常规周期")
+
+
+def _ref_year_of(ts: str) -> Optional[int]:
+    """Extract the 4-digit year from a reference timestamp ('2026年10月05日...' / ISO)."""
+    m = re.search(r"(\d{4})[年-]", str(ts or ""))
+    return int(m.group(1)) if m else None
+
+
 _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "EXP_PREWARM_BUFFER_01": {
         "experience_id": "EXP_PREWARM_BUFFER_01",
@@ -65,6 +76,17 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "duration_add_minutes": 30,
             "strategy": "前置预热加固",
         },
+        # Data-driven triggers (AND across groups, OR within a group); no per-sample literals in code.
+        "crystallize_trigger": {
+            "later_turns": [["提前进场调试", "掐着点开来不及", "提前进场", "来不及调试"], ["提前半小时", "提前30分钟"]],
+        },
+        "apply_trigger": {
+            "first_turn": [["奥体中心", "会展中心", "重大活动", "大型活动", "赛事", "峰会", "开幕式"]],
+            "later_turns": [["预热", "提前半小时", "提前30分钟"]],
+        },
+        "bridge_trigger": {"first_turn": [["重大活动保障", "重要现场保障"]]},
+        # Offset-type experience must not be applied before it is crystallized (learning session answers literally)
+        "bridge_requires_active": True,
     },
     "EXP_MULTI_INTENT_PARTITION_01": {
         "experience_id": "EXP_MULTI_INTENT_PARTITION_01",
@@ -82,22 +104,34 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "service_name": "视频通话",
             "preserve_user_quality_and_time": True,
         },
+        "crystallize_trigger": {
+            "later_turns": [["私下对", "对一下词", "对词", "对直播词"], ["微信视频", "微信-视频通话"]],
+        },
+        "apply_trigger": {"first_turn": [["对一下", "对词", "对直播词"], ["机位", "镜头"]]},
+        "bridge_trigger": {"first_turn": [["对一下", "对词", "对直播词"], ["词", "机位", "镜头"]]},
     },
     "EXP_CALENDAR_HOLIDAY_EXCEPTION_01": {
         "experience_id": "EXP_CALENDAR_HOLIDAY_EXCEPTION_01",
         "domain": "time_scheduling",
         "strategy_type": "holiday_avoidance",
         "title": "周期例行排期遇法定节假日自动顺延经验",
-        "description": "每周例行安排的周会意图保障单如果恰逢国家法定节假日（如2026年10月01日至10月07日国庆节放假），直接按原定休假日开通会导致空跑扣费。",
-        "condition": "周期例行周会意图保障单排期撞上国庆法定节假日（如2026年10月05日）",
-        "action": "将 start_timestamp 与 end_timestamp 的日期从 2026年10月05日 顺延改为节后首个工作日 2026年10月08日，时刻与 duration 不变",
+        "description": "每周例行安排的周会意图保障单如果恰逢国家法定节假日（如国庆节放假），直接按原定休假日开通会导致空跑扣费。",
+        "condition": "周期例行周会意图保障单排期撞上国家法定节假日",
+        "action": "将 start_timestamp 与 end_timestamp 的日期从法定假日顺延改为节后首个工作日（按法定节假日日历计算），时刻与 duration 不变",
         "trigger_conditions": {
-            "keywords": ["国庆节", "国庆假期", "中秋节", "元旦", "春节", "法定假日", "放假", "例行周会", "10月5日", "10月05日"],
+            "keywords": ["国庆节", "国庆假期", "中秋节", "元旦", "春节", "法定假日", "放假", "例行周会"],
         },
         "recommended_adjustments": {
-            "action": "将2026年10月05日顺延至节后首个工作日2026年10月08日（时刻与时长不变）",
+            "action": "将法定假日顺延至节后首个工作日（时刻与时长不变，日期由节假日日历计算）",
+            "shift_to": "next_statutory_workday",
             "strategy": "节假日排期避让",
         },
+        # @HOLIDAY_DATE matches an explicit 'M月D日' that falls on a statutory holiday (core/experience_rules.py)
+        "crystallize_trigger": {
+            "later_turns": [["放国庆假", "那天不开会", "放假", "假期"], ["顺延", "节后", "挪到", "改到"]],
+        },
+        "apply_trigger": {"first_turn": [["@HOLIDAY_DATE", "国庆", "法定假", "节假日"], ["例行周会", "例会", "周会"]]},
+        "bridge_trigger": {"first_turn": [["@HOLIDAY_DATE"], ["国庆", "法定假", "节假日", "放假", "假期", "例行周会", "例会", "周会"]]},
     },
     "EXP_ORDER_QUALITY_DISAMBIGUATION_01": {
         "experience_id": "EXP_ORDER_QUALITY_DISAMBIGUATION_01",
@@ -114,6 +148,11 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "duration": "120min",
             "prefer_formal_duration_over_recent_temp": True,
         },
+        "crystallize_trigger": {
+            "later_turns": [["前天那笔", "临时插空", "临时短会", "临时短单"], ["正式路演", "改成2个小时", "2个小时", "两个小时", "正式单"]],
+        },
+        "apply_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
+        "bridge_trigger": {"first_turn": [["路演"], ["意图保障单", "保障单"], ["上次", "上回", "之前", "那笔"]]},
     },
     "EXP_OVERLAPPING_ORDER_RESOLUTION_01": {
         "experience_id": "EXP_OVERLAPPING_ORDER_RESOLUTION_01",
@@ -130,6 +169,11 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "service_name": "开直播",
             "preserve_user_quality_and_time": True,
         },
+        "crystallize_trigger": {
+            "later_turns": [["当连麦嘉宾", "上麦发言", "连麦嘉宾"], ["改成开直播", "看直播", "开直播"]],
+        },
+        "apply_trigger": {"first_turn": [["连麦嘉宾"], ["直播间"]]},
+        "bridge_trigger": {"first_turn": [["连麦嘉宾"]]},
     },
 }
 
@@ -428,17 +472,13 @@ class MemorySystem:
         u_all_text = " ".join(user_turns_text)
 
         # 1. Experience Learning Crystallization (Multi-turn slow clarification branch -> crystallize EXP_*)
+        # Trigger keyword groups live in each experience card (crystallize_trigger), never inline literals.
+        ref_year = _ref_year_of(raw_ref_ts)
         crystallized_exp_id: Optional[str] = None
-        if ("提前进场调试" in u_later_text or "掐着点开来不及" in u_later_text) and "提前半小时" in u_later_text:
-            crystallized_exp_id = "EXP_PREWARM_BUFFER_01"
-        elif ("私下对" in u_later_text or "对一下词" in u_later_text) and ("微信视频" in u_later_text):
-            crystallized_exp_id = "EXP_MULTI_INTENT_PARTITION_01"
-        elif ("放国庆假" in u_later_text or "那天不开会" in u_later_text) and ("顺延" in u_later_text or "10月8日" in u_later_text):
-            crystallized_exp_id = "EXP_CALENDAR_HOLIDAY_EXCEPTION_01"
-        elif ("前天那笔" in u_later_text or "临时插空" in u_later_text) and ("正式路演" in u_later_text or "改成2个小时" in u_later_text):
-            crystallized_exp_id = "EXP_ORDER_QUALITY_DISAMBIGUATION_01"
-        elif ("当连麦嘉宾" in u_later_text or "上麦发言" in u_later_text) and ("改成开直播" in u_later_text or "看直播" in u_later_text):
-            crystallized_exp_id = "EXP_OVERLAPPING_ORDER_RESOLUTION_01"
+        for _eid, _tpl in _BUILTIN_EXPERIENCE_TEMPLATES.items():
+            if trigger_matches(_tpl, "crystallize_trigger", u1_text, u_later_text, ref_year):
+                crystallized_exp_id = _eid
+                break
 
         if crystallized_exp_id and crystallized_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
             is_non_pref = True
@@ -466,27 +506,15 @@ class MemorySystem:
             if n.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value)
         }
         applied_exp_id: Optional[str] = None
-        if "EXP_PREWARM_BUFFER_01" in active_exps and (
-            any(k in u1_text for k in ("奥体中心", "会展中心", "重大活动", "大型活动"))
-            and ("预热" in u_later_text or "提前半小时" in u_later_text)
-        ):
-            applied_exp_id = "EXP_PREWARM_BUFFER_01"
-        elif "EXP_MULTI_INTENT_PARTITION_01" in active_exps and (
-            ("对一下" in u1_text or "对词" in u1_text) and ("机位" in u1_text or "镜头" in u1_text)
-        ):
-            applied_exp_id = "EXP_MULTI_INTENT_PARTITION_01"
-        elif "EXP_CALENDAR_HOLIDAY_EXCEPTION_01" in active_exps and (
-            ("10月5日" in u1_text or "国庆" in u1_text) and "例行周会" in u1_text
-        ):
-            applied_exp_id = "EXP_CALENDAR_HOLIDAY_EXCEPTION_01"
-        elif "EXP_ORDER_QUALITY_DISAMBIGUATION_01" in active_exps and (
-            "正式客户远程路演" in u1_text and "意图保障单" in u1_text
-        ):
-            applied_exp_id = "EXP_ORDER_QUALITY_DISAMBIGUATION_01"
-        elif "EXP_OVERLAPPING_ORDER_RESOLUTION_01" in active_exps and (
-            "连麦嘉宾" in u1_text and "直播间" in u1_text
-        ):
-            applied_exp_id = "EXP_OVERLAPPING_ORDER_RESOLUTION_01"
+        for _eid, _tpl in _BUILTIN_EXPERIENCE_TEMPLATES.items():
+            if _eid not in active_exps:
+                continue
+            # Prefer the trigger stored on the user's active card; fall back to the builtin template.
+            _card = dict(_tpl)
+            _card.update({k: v for k, v in (active_exps[_eid].content or {}).items() if k.endswith("_trigger")})
+            if trigger_matches(_card, "apply_trigger", u1_text, u_later_text, ref_year):
+                applied_exp_id = _eid
+                break
 
         if applied_exp_id and applied_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
             is_non_pref = True
@@ -523,7 +551,14 @@ class MemorySystem:
                 # Match target working record: for reschedule ("昨天预约的"), pick latest; for reuse ("上周"/"上个月初"), pick earliest matching location
                 wr_nodes.sort(key=lambda x: str(x.content.get("record_id") or x.created_at or ""))
                 is_resched = "昨天预约的" in u1_text
-                target_wr = wr_nodes[-1] if is_resched else wr_nodes[0]
+                # Prefer records whose stored location is mentioned in the utterance (no fixed index assumption)
+                loc_hits = [
+                    n for n in wr_nodes
+                    if str(n.content.get("location") or "").strip()
+                    and str(n.content.get("location")).strip() in u1_text
+                ]
+                pool = loc_hits or wr_nodes
+                target_wr = pool[-1] if is_resched else pool[0]
                 rec_data = dict(target_wr.content)
                 rec_data["event_time"] = session_ts
                 if is_resched:
@@ -746,22 +781,14 @@ class MemorySystem:
         if "business" in ev.memory_key_fields:
             ev.memory_key_fields["business"] = biz
 
-        # Normalize physical/task scene names from user utterances
-        if "大巴转场途中" in user_text or "转场大巴" in user_text or "跨城转场" in user_text:
-            scene = "大巴转场途中"
-        elif "驻地复盘" in user_text or "驻地酒店" in user_text or "回酒店" in user_text:
-            scene = "驻地酒店休息区"
-        elif "外勤保障现场" in user_text or "外访客户" in user_text:
-            scene = "外勤保障现场"
-        elif "周末午休" in user_text:
-            scene = "周末午休"
-        elif "阶段工作总结会" in user_text:
-            scene = "阶段工作总结会"
+        # Align the extracted scene with this user's already-known scenes (data-driven, no per-sample
+        # scene names): if a known scene string literally appears in the user's text, reuse it (longest
+        # match wins, so e.g. two distinct venues sharing a prefix are never collapsed into one).
+        scene = self._align_scene_with_known(ns, scene, user_text)
 
-        # Routine periodic phrases or temporary event override contexts should not fork a new scene node
-        if scene in ("常规周期保障现场", "常规周期", "公益赛事活动现场", "跨境商贸展会现场") or "活动现场" in scene:
-            if scene not in ("外勤保障现场",):
-                scene = ""
+        # One-off event venues / routine-period phrases should not fork a long-term scene node
+        if scene and any(marker in scene for marker in _TRANSIENT_SCENE_MARKERS):
+            scene = ""
 
         # Check existing non-expired/non-archived parameter nodes (scene_preference / preferred_value) for (app, biz)
         existing_param: Optional[MemoryNode] = None
@@ -772,8 +799,6 @@ class MemorySystem:
             if node.content.get("application") != app or node.content.get("business") != biz:
                 continue
             if node.subtype in ("scene_preference", "preferred_value"):
-                if node.content.get("scene") in ("周末午休", "阶段工作总结会") and scene not in ("周末午休", "阶段工作总结会"):
-                    continue
                 if scene and node.subtype == "scene_preference" and node.content.get("scene") == scene:
                     existing_param = node
                 elif existing_param is None or node.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value):
@@ -911,7 +936,6 @@ class MemorySystem:
             )
         elif (
             existing_param is not None
-            and scene not in ("周末午休", "阶段工作总结会")
             and (
                 not scene
                 or existing_param.content.get("scene") == scene
@@ -1016,7 +1040,7 @@ class MemorySystem:
         if not cond_tw and existing_periodic is not None and ev.event_type == EventType.PREFERENCE_CONFIRM.value:
             cond_tw = str(existing_periodic.content.get("time_window") or existing_periodic.content.get("condition") or "").strip()
 
-        if cond_tw and ev.validity != "temporary" and scene not in ("周末午休", "阶段工作总结会"):
+        if cond_tw and ev.validity != "temporary":
             val_str = f"{app}:{biz}"
             pp_content: Dict[str, Any] = {
                 "condition": cond_tw,
@@ -1049,6 +1073,26 @@ class MemorySystem:
             )
 
         return out_events
+
+    def _align_scene_with_known(self, ns: Namespace, scene: str, user_text: str) -> str:
+        """Reuse an existing scene name of this user when it literally occurs in the user's text.
+
+        Data-driven replacement for the former hardcoded scene-name mapping: the candidate set is the
+        user's own stored scene_preference scenes, never a fixed list of sample venue names.
+        """
+        known: List[str] = []
+        for node in self.filestore.iter_nodes(ns, memory_type="preference", subtype="scene_preference"):
+            if node.status in (MemoryStatus.ARCHIVED.value, MemoryStatus.EXPIRED.value, MemoryStatus.SUPERSEDED.value):
+                continue
+            sc = str(node.content.get("scene") or "").strip()
+            if sc and sc not in known:
+                known.append(sc)
+        if scene and scene in known:
+            return scene
+        hits = [sc for sc in known if sc in (user_text or "")]
+        if hits:
+            return max(hits, key=len)
+        return scene
 
     def _apply_candidate(self, ns: Namespace, event: Event) -> MemoryNode:
         return self.updater.apply_event(ns, event)
