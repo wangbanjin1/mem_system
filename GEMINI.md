@@ -11,7 +11,8 @@
 - **模型配置**：
   - 记忆萃取与归纳 LLM：`qwen3.8-flash` / `qwen3.7-plus`（百炼 OpenAI 兼容接口）
   - 向量编码模型：`text-embedding-v4`（`1024` 维）
-- **关联上下游仓库**：
+- **关联上下游仓库与专题文档索引**：
+  - 全链路架构与样本规范：[docs/COGNITIVE_MEMORY_ARCHITECTURE.md](docs/COGNITIVE_MEMORY_ARCHITECTURE.md) — 跨会话数据生成、三层记忆正交萃取、Ebbinghaus 衰减与滑动窗口混合检索全景规范
   - 上游合成数据集：`D:\coding\cross_memory_data`（`data/cognitive_samples`）
   - 下游意图理解与端到端评测：`D:\coding\qwen_intent_rag`（通过 `memory_bridge.py` 桥接调用本仓 API）
 - **Git 分支工作流**：`main` 分支已归档当前三层认知记忆稳定基线（Tag：`v1.0.0-three-tier-baseline`）；后续任何新特性开发（如 `TODO #01 信息隔离的双向渲染` 及在线双路径评测）**必须先从 `main` 单独拉取 `feature/<topic>` 分支进行开发验证**，严禁直接在 `main` 主干上修改实验代码。
@@ -50,12 +51,17 @@
 
 ---
 
-## 3. 项目工程红线与历史踩坑记录 (Lessons Learned)
+## 3. 项目工程红线与历史踩坑记录 (`Rule + Why + How to apply`)
 
-1. **严禁样本级硬编码**：
-   - `experience_rules.py`、`working_rules.py`、`fastpath.py` 及 `search.py` 中严禁写死特定样本的时间窗（如 `15:00-17:00`）、固定时长（如硬编码 `120min`）或特定场馆字面量。所有参数必须从记忆卡片、工单记录或用户原话中动态提取。
-2. **保持正交边界**：
-   - 修改 `extractor.py` 或 `updater.py` 时，必须确保 5 层事实记忆字段严格正交，不得将 `resolution`/`latency` 混入 `periodic_preference`。
+1. **严禁样本级硬编码（Zero Sample Hardcoding）**：
+   - `experience_rules.py`、`working_rules.py`、`fastpath.py` 及 `search.py` 中严禁写死特定样本的时间窗（如 `15:00-17:00`）、固定时长（如硬编码 `120min`）或特定场馆字面量。
+   - **Why:** 写死测试集字面量会破坏检索与推理引擎的泛化能力，导致新用户画像或动态时间窗评测直接失效。
+   - **How to apply:** 所有参数必须从向量命中记录的同行结构化槽位列、历史工单记录或用户当前原话中动态提取与计算。
+
+2. **保持五层事实记忆严格正交（Orthogonal Fact Boundaries）**：
+   - 修改 `extractor.py` 或 `updater.py` 时，严禁将 `resolution`/`latency` 混入 `periodic_preference`，或将地点词混入 `preferred_value` 的短词向量列。
+   - **Why:** 跨子类型混装槽位会污染 `4~10` 字高纯度短词向量池的余弦相似度分布，并在二阶段关联表补全时引发错误的参数覆盖。
+   - **How to apply:** 严格遵循方案 A 的五类单一职责切分，在落盘前通过 Schema 校验拦截越界字段；引用记忆中的代码符号前必须先 `Grep/Read` 验证当前代码实况。
 
 ---
 
