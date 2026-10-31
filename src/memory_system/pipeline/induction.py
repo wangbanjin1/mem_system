@@ -7,8 +7,14 @@ from ..core.memory_key import build_memory_key
 from ..core.models import Event, EventType, MemoryNode, MemoryStatus
 from ..core.namespace import Namespace
 from ..core.registry import MemoryRegistry
+from ..prompts.induction_prompts import INDUCTION_SYSTEM_PROMPT
 from ..storage.filestore import FileStore
 from .updater import MemoryUpdater
+
+__all__ = [
+    "INDUCTION_SYSTEM_PROMPT",
+    "InductionEngine",
+]
 
 
 class InductionEngine:

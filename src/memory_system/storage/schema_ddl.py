@@ -128,6 +128,51 @@ def extract_structured_columns(node: MemoryNode) -> Dict[str, str]:
     }
 
 
+def _compute_subtype_slot_score(
+    st: str,
+    app_hit: bool,
+    biz_hit: bool,
+    scene_hit: bool,
+    tw_hit: bool,
+    date_hit: bool,
+    has_scene_set: bool,
+) -> float:
+    """Compute slot match confidence score by memory subtype and matched column combinations."""
+    if st in ("scene_preference", "environment"):
+        if app_hit and biz_hit and scene_hit:
+            return 0.98
+        if (app_hit or biz_hit) and scene_hit:
+            return 0.94
+        if app_hit and biz_hit:
+            return 0.96 if not has_scene_set else 0.90
+        return 0.88 if scene_hit else (0.85 if (app_hit or biz_hit) else 0.0)
+    if st in ("preferred_value", "application_business", "experience_parameter"):
+        if app_hit and biz_hit:
+            return 0.98 if not has_scene_set else 0.93
+        return 0.85 if (app_hit or biz_hit) else 0.0
+    if st == "working_record":
+        if date_hit and (scene_hit or (app_hit and biz_hit)):
+            return 0.96
+        if scene_hit and (app_hit or biz_hit):
+            return 0.94
+        if date_hit:
+            return 0.91
+        if scene_hit:
+            return 0.89
+        return 0.86 if (app_hit and biz_hit) else (0.82 if (app_hit or biz_hit) else 0.0)
+    if st == "periodic_preference":
+        if app_hit and biz_hit and tw_hit:
+            return 0.96
+        if (app_hit or biz_hit) and tw_hit:
+            return 0.91
+        if app_hit and biz_hit:
+            return 0.90
+        return 0.86 if tw_hit else (0.82 if (app_hit or biz_hit) else 0.0)
+    if st == "service_to_app":
+        return 0.84 if (app_hit and biz_hit) else 0.78
+    return 0.80
+
+
 def score_slot_row_match(
     row: sqlite3.Row | Dict[str, Any],
     app_set: Set[str],
@@ -137,20 +182,12 @@ def score_slot_row_match(
     relative_date_range: Optional[Tuple[str, str]],
 ) -> Optional[Tuple[str, float, str]]:
     """Score a single SQLite vector row against structured slot criteria (Orthogonal Scheme A)."""
-    mid = row["memory_id"]
-    st = row["subtype"]
-    r_app = row["app_col"]
-    r_biz = row["biz_col"]
-    r_scene = row["scene_col"]
-    r_tw = row["time_window_col"]
+    mid, st = row["memory_id"], row["subtype"]
+    r_app, r_biz, r_scene, r_tw = row["app_col"], row["biz_col"], row["scene_col"], row["time_window_col"]
 
     has_date_range = bool(
-        relative_date_range
-        and len(relative_date_range) == 2
-        and relative_date_range[0]
-        and relative_date_range[1]
+        relative_date_range and len(relative_date_range) == 2 and relative_date_range[0] and relative_date_range[1]
     )
-
     app_hit = bool(app_set and r_app and r_app in app_set)
     biz_hit = bool(biz_set and r_biz and r_biz in biz_set)
     scene_hit = bool(scene_set and r_scene and any(sc in r_scene or r_scene in sc for sc in scene_set))
@@ -179,52 +216,7 @@ def score_slot_row_match(
     if not matched_fields:
         return None
 
-    score = 0.0
-    if st in ("scene_preference", "environment"):
-        if app_hit and biz_hit and scene_hit:
-            score = 0.98
-        elif (app_hit or biz_hit) and scene_hit:
-            score = 0.94
-        elif app_hit and biz_hit:
-            score = 0.96 if not scene_set else 0.90
-        elif scene_hit:
-            score = 0.88
-        elif app_hit or biz_hit:
-            score = 0.85
-    elif st in ("preferred_value", "application_business", "experience_parameter"):
-        if app_hit and biz_hit:
-            score = 0.98 if not scene_set else 0.93
-        elif app_hit or biz_hit:
-            score = 0.85
-    elif st == "working_record":
-        if date_hit and (scene_hit or (app_hit and biz_hit)):
-            score = 0.96
-        elif scene_hit and (app_hit or biz_hit):
-            score = 0.94
-        elif date_hit:
-            score = 0.91
-        elif scene_hit:
-            score = 0.89
-        elif app_hit and biz_hit:
-            score = 0.86
-        elif app_hit or biz_hit:
-            score = 0.82
-    elif st == "periodic_preference":
-        if app_hit and biz_hit and tw_hit:
-            score = 0.96
-        elif (app_hit or biz_hit) and tw_hit:
-            score = 0.91
-        elif app_hit and biz_hit:
-            score = 0.90
-        elif tw_hit:
-            score = 0.86
-        elif app_hit or biz_hit:
-            score = 0.82
-    elif st == "service_to_app":
-        score = 0.84 if (app_hit and biz_hit) else 0.78
-    else:
-        score = 0.80
-
+    score = _compute_subtype_slot_score(st, app_hit, biz_hit, scene_hit, tw_hit, date_hit, bool(scene_set))
     if score <= 0:
         return None
     return (mid, score, "SELECT WHERE " + " AND ".join(matched_fields))

@@ -93,6 +93,9 @@ class MemorySystem:
         self.router_llm_provider = router_llm_provider or LLMProvider.from_config(self.config.llm_router)
 
         half_life = float(self.config.maintenance.get("heat_half_life_hours", 168.0))
+        self._init_pipeline_and_engines(half_life)
+
+    def _init_pipeline_and_engines(self, half_life: float) -> None:
         self.archiver = SessionArchiver(self.filestore)
         self.fastpath = FastPathProcessor(self.config.repo_root / "data")
         self.extractor = Extractor(
@@ -151,56 +154,18 @@ class MemorySystem:
         if q_cfg.get("async_mode", False):
             self.queue.start_worker()
 
-    def record_session(
+    def _dispatch_fastpath_and_llm(
         self,
+        ns: Namespace,
         tenant_id: str,
         user_id: str,
         agent_id: str,
         session_id: str,
-        turns: List[Dict[str, Any]],
-        async_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        reference_time: Optional[str] = None,
+        numbered_turns: List[Dict[str, Any]],
+        session_ts: str,
+        decay_summary: Dict[str, Any],
+        async_mode: Optional[bool],
     ) -> Dict[str, Any]:
-        """Full write pipeline sequence (§1.2): decay -> archive -> cognitive tier -> fastpath -> LLM -> induction."""
-        ns = user_namespace(user_id=user_id, tenant_id=tenant_id)
-        numbered_turns = self.extractor._ensure_turn_numbers(turns)
-
-        raw_ref_ts = (
-            reference_time
-            or (metadata or {}).get("reference_time")
-            or (numbered_turns[0].get("time") if numbered_turns else None)
-        )
-        session_ts = normalize_ts_str(str(raw_ref_ts)) if raw_ref_ts else normalize_ts_str(None)
-        decay_summary = self.maintenance.apply_ebbinghaus_lifecycle_decay(ns, now_ts=session_ts)
-
-        self.archiver.archive_session(
-            tenant_id=tenant_id,
-            user_id=user_id,
-            agent_id=agent_id,
-            session_id=session_id,
-            turns=numbered_turns,
-            metadata=metadata,
-        )
-
-        is_non_pref_session, cog_events, cog_node_ids = self._process_cognitive_tier_events(
-            ns=ns,
-            session_id=session_id,
-            turns=numbered_turns,
-            metadata=metadata,
-            session_ts=session_ts,
-            raw_ref_ts=str(raw_ref_ts or ""),
-        )
-        if is_non_pref_session:
-            self.induction.run_all(ns)
-            return {
-                "task_id": f"TASK_{uuid.uuid4().hex[:12].upper()}",
-                "status": "completed",
-                "fastpath_nodes": cog_node_ids,
-                "extracted_events": cog_events,
-                "ebbinghaus_decay": decay_summary,
-            }
-
         fp_result = self.fastpath.process(
             session_turns=numbered_turns, session_id=session_id, user_id=user_id, tenant_id=tenant_id
         )
@@ -262,6 +227,68 @@ class MemorySystem:
             "extracted_events": extracted_events_out,
             "ebbinghaus_decay": decay_summary,
         }
+
+    def record_session(
+        self,
+        tenant_id: str,
+        user_id: str,
+        agent_id: str,
+        session_id: str,
+        turns: List[Dict[str, Any]],
+        async_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        reference_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Full write pipeline sequence (§1.2): decay -> archive -> cognitive tier -> fastpath -> LLM -> induction."""
+        ns = user_namespace(user_id=user_id, tenant_id=tenant_id)
+        numbered_turns = self.extractor._ensure_turn_numbers(turns)
+
+        raw_ref_ts = (
+            reference_time
+            or (metadata or {}).get("reference_time")
+            or (numbered_turns[0].get("time") if numbered_turns else None)
+        )
+        session_ts = normalize_ts_str(str(raw_ref_ts)) if raw_ref_ts else normalize_ts_str(None)
+        decay_summary = self.maintenance.apply_ebbinghaus_lifecycle_decay(ns, now_ts=session_ts)
+
+        self.archiver.archive_session(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            turns=numbered_turns,
+            metadata=metadata,
+        )
+
+        is_non_pref_session, cog_events, cog_node_ids = self._process_cognitive_tier_events(
+            ns=ns,
+            session_id=session_id,
+            turns=numbered_turns,
+            metadata=metadata,
+            session_ts=session_ts,
+            raw_ref_ts=str(raw_ref_ts or ""),
+        )
+        if is_non_pref_session:
+            self.induction.run_all(ns)
+            return {
+                "task_id": f"TASK_{uuid.uuid4().hex[:12].upper()}",
+                "status": "completed",
+                "fastpath_nodes": cog_node_ids,
+                "extracted_events": cog_events,
+                "ebbinghaus_decay": decay_summary,
+            }
+
+        return self._dispatch_fastpath_and_llm(
+            ns=ns,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            numbered_turns=numbered_turns,
+            session_ts=session_ts,
+            decay_summary=decay_summary,
+            async_mode=async_mode,
+        )
 
     def _handle_async_llm_task(self, payload: Dict[str, Any]) -> None:
         self._run_llm_extract_and_induce(payload)

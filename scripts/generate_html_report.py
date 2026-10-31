@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 repo_root = Path(__file__).resolve().parents[1]
 CROSS_DATA_DIR = Path(r"D:\coding\cross_memory_data\data\generated")
@@ -833,12 +836,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     enriched = build_enriched_data()
     html_content = HTML_TEMPLATE.replace(
         "__REPORT_DATA_JSON__", json.dumps(enriched, ensure_ascii=False)
     )
     OUT_HTML_PATH.write_text(html_content, encoding="utf-8")
-    print(f"Generated HTML report at: {OUT_HTML_PATH}")
+    logger.info("Generated HTML report at: %s", OUT_HTML_PATH)
 
 
 if __name__ == "__main__":

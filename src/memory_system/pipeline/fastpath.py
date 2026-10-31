@@ -1,3 +1,4 @@
+"""Rule-based zero-LLM fast path for alias mapping, slot matching, corrections, and noise filtering."""
 from __future__ import annotations
 
 import json
@@ -8,7 +9,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..core.models import Event, EventType
 from .extractor import Extractor, extract_time_window_from_text
-
 
 # Parameter signal regex (§4 Pitfall 3): if matched, MUST NOT skip LLM!
 _PARAM_SIGNAL_RE = re.compile(
@@ -177,49 +177,16 @@ class FastPathProcessor:
                     return alias_str, target_str
         return None
 
-    def process(
+    def _try_working_memory_fastpath(
         self,
-        session_turns: List[Dict[str, Any]],
-        session_id: str = "",
-        user_id: str = "",
-        tenant_id: str = "default",
-    ) -> FastPathResult:
-        res = FastPathResult()
-        if not session_turns:
-            res.is_noise = True
-            res.needs_llm = False
-            return res
-
-        numbered_turns = Extractor._ensure_turn_numbers(session_turns)
-
-        user_turns: List[Tuple[int, str]] = []
-        for idx, t in enumerate(numbered_turns, start=1):
-            turn_no = int(t.get("turn", idx))
-            role = str(t.get("role", "user")).lower()
-            txt = str(t.get("content") or t.get("text") or "").strip()
-            if role == "user" and txt:
-                user_turns.append((turn_no, txt))
-
-        if not user_turns:
-            res.is_noise = True
-            res.needs_llm = False
-            return res
-
-        # Check if all user turns are pure noise/chitchat
-        if all(_NOISE_EXACT_RE.match(txt) for _, txt in user_turns):
-            res.is_noise = True
-            res.needs_llm = False
-            return res
-
-        full_user_text = " ".join(txt for _, txt in user_turns)
-        if _PARAM_SIGNAL_RE.search(full_user_text):
-            res.has_param_signal = True
-        if _CONCESSION_RE.search(full_user_text):
-            res.has_concession = True
-
-        seen_aliases: Set[str] = set()
-
-        # Check multi-turn disambiguation aliases (Agent asks "您说的‘X’具体指..." -> User confirms "720p")
+        numbered_turns: List[Dict[str, Any]],
+        seen_aliases: Set[str],
+        session_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> List[Event]:
+        """Extract multi-turn disambiguation aliases where agent asks for clarification and user confirms."""
+        events: List[Event] = []
         pending_disambig_alias: Optional[str] = None
         for t in numbered_turns:
             role = str(t.get("role", "user")).lower()
@@ -234,7 +201,7 @@ class FastPathProcessor:
                 if m_cf and pending_disambig_alias not in seen_aliases:
                     target_val = m_cf.group(1).strip().lower().replace("毫秒", "ms").replace("分钟", "min")
                     seen_aliases.add(pending_disambig_alias)
-                    res.confirmed.append(
+                    events.append(
                         Event(
                             event_type=EventType.EXPRESSION_ALIAS.value,
                             subtype="expression",
@@ -255,145 +222,159 @@ class FastPathProcessor:
                         )
                     )
                 pending_disambig_alias = None
+        return events
 
-        for turn_no, txt in user_turns:
-            validity = self._detect_validity(txt)
-            is_conc = bool(_CONCESSION_RE.search(txt))
+    def _try_experience_rule_fastpath(
+        self,
+        turn_no: int,
+        txt: str,
+        seen_aliases: Set[str],
+        is_conc: bool,
+        session_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> Optional[Event]:
+        """Match explicit expression alias or preference clear rules in a single user turn."""
+        m_alias = self._match_alias_in_text(txt)
+        if m_alias:
+            alias_str, target_str = m_alias
+            if alias_str not in seen_aliases:
+                seen_aliases.add(alias_str)
+                app, biz = self._detect_app_and_biz(target_str)
+                content: Dict[str, Any] = {
+                    "alias": alias_str,
+                    "source_expression": alias_str,
+                    "target": target_str,
+                    "validity": "long_term",
+                    "note": f"用户定义「{alias_str}」表示「{target_str}」",
+                }
+                if app:
+                    content["application"] = app
+                if biz:
+                    content["business"] = biz
+                return Event(
+                    event_type=EventType.EXPRESSION_ALIAS.value,
+                    subtype="expression",
+                    memory_key_fields={"alias": alias_str},
+                    content=content,
+                    validity="long_term",
+                    confidence=0.95,
+                    source_session_id=session_id,
+                    evidence_turns=[turn_no],
+                    is_concession=is_conc,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                )
 
-            # 1. Expression Alias rule
-            m_alias = self._match_alias_in_text(txt)
-            if m_alias:
-                alias_str, target_str = m_alias
-                if alias_str not in seen_aliases:
-                    seen_aliases.add(alias_str)
-                    app, biz = self._detect_app_and_biz(target_str)
-                    content: Dict[str, Any] = {
-                        "alias": alias_str,
-                        "source_expression": alias_str,
-                        "target": target_str,
-                        "validity": "long_term",
-                        "note": f"用户定义「{alias_str}」表示「{target_str}」",
-                    }
-                    if app:
-                        content["application"] = app
-                    if biz:
-                        content["business"] = biz
-                    res.confirmed.append(
-                        Event(
-                            event_type=EventType.EXPRESSION_ALIAS.value,
-                            subtype="expression",
-                            memory_key_fields={"alias": alias_str},
-                            content=content,
-                            validity="long_term",
-                            confidence=0.95,
-                            source_session_id=session_id,
-                            evidence_turns=[turn_no],
-                            is_concession=is_conc,
-                            user_id=user_id,
-                            tenant_id=tenant_id,
-                        )
-                    )
-                    continue
-
-            # 2. Clear rule
-            if _CLEAR_RE.search(txt):
-                app, biz = self._detect_app_and_biz(txt)
-                if app and biz:
-                    res.confirmed.append(
-                        Event(
-                            event_type=EventType.PREFERENCE_CLEAR.value,
-                            subtype="application_business",
-                            memory_key_fields={"application": app, "business": biz},
-                            content={"application": app, "business": biz, "note": txt},
-                            validity="long_term",
-                            confidence=0.95,
-                            source_session_id=session_id,
-                            evidence_turns=[turn_no],
-                            user_id=user_id,
-                            tenant_id=tenant_id,
-                        )
-                    )
-                    continue
-
-            # 3. Correction rule ("不是X，是Y")
-            m_corr = _CORRECTION_RE.search(txt)
-            if m_corr:
-                wrong_part, right_part = m_corr.group(1).strip(), m_corr.group(2).strip()
-                app, biz = self._detect_app_and_biz(right_part)
-                if not app or not biz:
-                    app2, biz2 = self._detect_app_and_biz(txt)
-                    app = app or app2
-                    biz = biz or biz2
-                if app and biz and self._is_supported(app, biz):
-                    content = {
-                        "application": app,
-                        "business": biz,
-                        "corrected_from": wrong_part,
-                        "corrected_to": right_part,
-                        "validity": validity,
-                        "note": txt,
-                    }
-                    self._extract_inline_params(txt, content)
-                    res.confirmed.append(
-                        Event(
-                            event_type=EventType.PREFERENCE_CORRECT.value,
-                            subtype="application_business",
-                            memory_key_fields={"application": app, "business": biz},
-                            content=content,
-                            validity=validity,
-                            confidence=0.92,
-                            source_session_id=session_id,
-                            evidence_turns=[turn_no],
-                            is_concession=is_conc,
-                            user_id=user_id,
-                            tenant_id=tenant_id,
-                        )
-                    )
-                    continue
-
-            # 4. Explicit app + business statement
+        if _CLEAR_RE.search(txt):
             app, biz = self._detect_app_and_biz(txt)
+            if app and biz:
+                return Event(
+                    event_type=EventType.PREFERENCE_CLEAR.value,
+                    subtype="application_business",
+                    memory_key_fields={"application": app, "business": biz},
+                    content={"application": app, "business": biz, "note": txt},
+                    validity="long_term",
+                    confidence=0.95,
+                    source_session_id=session_id,
+                    evidence_turns=[turn_no],
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                )
+        return None
+
+    def _try_factual_slot_fastpath(
+        self,
+        turn_no: int,
+        txt: str,
+        full_user_text: str,
+        validity: str,
+        is_conc: bool,
+        session_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> Optional[Event]:
+        """Match preference correction ('不是X，是Y') or explicit app+business slot statements."""
+        m_corr = _CORRECTION_RE.search(txt)
+        if m_corr:
+            wrong_part, right_part = m_corr.group(1).strip(), m_corr.group(2).strip()
+            app, biz = self._detect_app_and_biz(right_part)
+            if not app or not biz:
+                app2, biz2 = self._detect_app_and_biz(txt)
+                app = app or app2
+                biz = biz or biz2
             if app and biz and self._is_supported(app, biz):
-                content = {
+                content: Dict[str, Any] = {
                     "application": app,
                     "business": biz,
+                    "corrected_from": wrong_part,
+                    "corrected_to": right_part,
                     "validity": validity,
                     "note": txt,
                 }
                 self._extract_inline_params(txt, content)
-                if validity != "temporary":
-                    tmp_full: Dict[str, Any] = {}
-                    self._extract_inline_params(full_user_text, tmp_full)
-                    for k_miss in ("resolution", "latency", "time_window", "priority"):
-                        if not content.get(k_miss) and tmp_full.get(k_miss):
-                            content[k_miss] = tmp_full[k_miss]
-                res.confirmed.append(
-                    Event(
-                        event_type=EventType.PREFERENCE_SET.value,
-                        subtype="application_business",
-                        memory_key_fields={"application": app, "business": biz},
-                        content=content,
-                        validity=validity,
-                        confidence=0.9,
-                        source_session_id=session_id,
-                        evidence_turns=[turn_no],
-                        is_concession=is_conc,
-                        user_id=user_id,
-                        tenant_id=tenant_id,
-                    )
+                return Event(
+                    event_type=EventType.PREFERENCE_CORRECT.value,
+                    subtype="application_business",
+                    memory_key_fields={"application": app, "business": biz},
+                    content=content,
+                    validity=validity,
+                    confidence=0.92,
+                    source_session_id=session_id,
+                    evidence_turns=[turn_no],
+                    is_concession=is_conc,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
                 )
 
-        # 5. Cross-turn fallback: if no preference event was emitted from any user turn,
-        # and user only mentioned biz with a habit/reinforcement reference while assistant confirmed app (e.g. S-USER_016-03, S-USER_026-03)
+        app, biz = self._detect_app_and_biz(txt)
+        if app and biz and self._is_supported(app, biz):
+            content = {
+                "application": app,
+                "business": biz,
+                "validity": validity,
+                "note": txt,
+            }
+            self._extract_inline_params(txt, content)
+            if validity != "temporary":
+                tmp_full: Dict[str, Any] = {}
+                self._extract_inline_params(full_user_text, tmp_full)
+                for k_miss in ("resolution", "latency", "time_window", "priority"):
+                    if not content.get(k_miss) and tmp_full.get(k_miss):
+                        content[k_miss] = tmp_full[k_miss]
+            return Event(
+                event_type=EventType.PREFERENCE_SET.value,
+                subtype="application_business",
+                memory_key_fields={"application": app, "business": biz},
+                content=content,
+                validity=validity,
+                confidence=0.9,
+                source_session_id=session_id,
+                evidence_turns=[turn_no],
+                is_concession=is_conc,
+                user_id=user_id,
+                tenant_id=tenant_id,
+            )
+        return None
+
+    def _finalize_fastpath_decision(
+        self,
+        res: FastPathResult,
+        numbered_turns: List[Dict[str, Any]],
+        user_turns: List[Tuple[int, str]],
+        full_user_text: str,
+        session_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> FastPathResult:
+        """Apply cross-turn fallback confirmation and decide whether LLM extraction is still required."""
         has_pref_ev = any(
             ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
             for ev in res.confirmed
         )
         if not has_pref_ev and len(user_turns) >= 2:
             u_app, u_biz = self._detect_app_and_biz(full_user_text)
-            full_all_text = " ".join(
-                str(t.get("content") or t.get("text") or "") for t in numbered_turns
-            )
+            full_all_text = " ".join(str(t.get("content") or t.get("text") or "") for t in numbered_turns)
             if not u_app or not u_biz:
                 a_app, a_biz = self._detect_app_and_biz(full_all_text)
                 u_app = u_app or a_app
@@ -429,15 +410,65 @@ class FastPathProcessor:
                     )
                 )
 
-        # Decide whether LLM is still needed (§1.2 & §4 Pitfall 3):
-        # If confirmed events exist AND no param signal AND no concession, we can skip LLM!
-        # Otherwise, if there are parameter signals, concessions, or nothing confirmed yet, run LLM.
-        if res.confirmed and not res.has_param_signal and not res.has_concession:
-            res.needs_llm = False
-        else:
-            res.needs_llm = True
-
+        res.needs_llm = not (res.confirmed and not res.has_param_signal and not res.has_concession)
         return res
+
+    def process(
+        self,
+        session_turns: List[Dict[str, Any]],
+        session_id: str = "",
+        user_id: str = "",
+        tenant_id: str = "default",
+    ) -> FastPathResult:
+        """Orchestrate zero-LLM fast-path stages and determine whether LLM extraction is needed."""
+        res = FastPathResult()
+        if not session_turns:
+            res.is_noise = True
+            res.needs_llm = False
+            return res
+
+        numbered_turns = Extractor._ensure_turn_numbers(session_turns)
+        user_turns: List[Tuple[int, str]] = [
+            (int(t.get("turn", idx)), str(t.get("content") or t.get("text") or "").strip())
+            for idx, t in enumerate(numbered_turns, start=1)
+            if str(t.get("role", "user")).lower() == "user"
+            and str(t.get("content") or t.get("text") or "").strip()
+        ]
+
+        if not user_turns or all(_NOISE_EXACT_RE.match(txt) for _, txt in user_turns):
+            res.is_noise = True
+            res.needs_llm = False
+            return res
+
+        full_user_text = " ".join(txt for _, txt in user_turns)
+        res.has_param_signal = bool(_PARAM_SIGNAL_RE.search(full_user_text))
+        res.has_concession = bool(_CONCESSION_RE.search(full_user_text))
+
+        seen_aliases: Set[str] = set()
+        res.confirmed.extend(
+            self._try_working_memory_fastpath(numbered_turns, seen_aliases, session_id, user_id, tenant_id)
+        )
+
+        for turn_no, txt in user_turns:
+            validity = self._detect_validity(txt)
+            is_conc = bool(_CONCESSION_RE.search(txt))
+
+            rule_ev = self._try_experience_rule_fastpath(
+                turn_no, txt, seen_aliases, is_conc, session_id, user_id, tenant_id
+            )
+            if rule_ev is not None:
+                res.confirmed.append(rule_ev)
+                continue
+
+            slot_ev = self._try_factual_slot_fastpath(
+                turn_no, txt, full_user_text, validity, is_conc, session_id, user_id, tenant_id
+            )
+            if slot_ev is not None:
+                res.confirmed.append(slot_ev)
+
+        return self._finalize_fastpath_decision(
+            res, numbered_turns, user_turns, full_user_text, session_id, user_id, tenant_id
+        )
 
     def _is_supported(self, app: str, biz: str) -> bool:
         if not self.support_matrix:

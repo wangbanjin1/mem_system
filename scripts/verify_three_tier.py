@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import sys
 import tempfile
@@ -11,10 +12,13 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 from memory_system.api import MemorySystem
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     tmp_dir = Path(tempfile.mkdtemp(prefix="verify_three_tier_"))
-    print(f"[Verify 3-Tier] Using data_root: {tmp_dir}")
+    logger.info("[Verify 3-Tier] Using data_root: %s", tmp_dir)
     try:
         ms = MemorySystem(data_root=tmp_dir)
 
@@ -82,12 +86,12 @@ def main() -> None:
                 top_k=3,
                 levels="full",
             )
-            print(f"[Verify 3-Tier] Category={label} Query={q!r} -> {len(hits)} hits")
+            logger.info("[Verify 3-Tier] Category=%s Query=%r -> %d hits", label, q, len(hits))
             assert hits, f"Expected hit for category {label}"
             top = hits[0]
-            print(f"   Top hit: subtype={top['subtype']} key={top['memory_key']} score={top['score']}")
+            logger.info("   Top hit: subtype=%s key=%s score=%s", top["subtype"], top["memory_key"], top["score"])
 
-        print("[Verify 3-Tier] All 4 query categories across Fact / Working / Experience tiers succeeded!")
+        logger.info("[Verify 3-Tier] All 4 query categories across Fact / Working / Experience tiers succeeded!")
         ms.close()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

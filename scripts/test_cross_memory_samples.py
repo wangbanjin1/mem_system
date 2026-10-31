@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo_root / "src"))
@@ -107,7 +110,7 @@ def run_sample_evaluation() -> None:
         sessions_list = load_sessions_list(persona_dir)
         traces_map = load_traces_map(persona_dir)
 
-        print(f"\n================ Testing {persona_name} ({user_id}) [{len(sessions_list)} sessions] ================")
+        logger.info("================ Testing %s (%s) [%d sessions] ================", persona_name, user_id, len(sessions_list))
         step_snapshots = []
         last_ref_ts = ""
 
@@ -160,12 +163,16 @@ def run_sample_evaluation() -> None:
                     ],
                 }
 
-            print(f"\n-> Ingesting {sid} @ {ref_time} ({last_ref_ts}) [role={role}, blueprint={blueprint}] ...")
+            logger.info("-> Ingesting %s @ %s (%s) [role=%s, blueprint=%s] ...", sid, ref_time, last_ref_ts, role, blueprint)
             if session_search and session_search["hits"]:
                 top_h = session_search["hits"][0]
-                print(
-                    f"   [Turn-1 Search] Q='{session_search['query']}' -> #1 [{top_h['subtype']}] {top_h['memory_key']} "
-                    f"(score={top_h['score']}) | {top_h['explain']['structured_match']}"
+                logger.info(
+                    "   [Turn-1 Search] Q='%s' -> #1 [%s] %s (score=%s) | %s",
+                    session_search["query"],
+                    top_h["subtype"],
+                    top_h["memory_key"],
+                    top_h["score"],
+                    top_h["explain"]["structured_match"],
                 )
 
             rec_res = ms.record_session(
@@ -180,24 +187,35 @@ def run_sample_evaluation() -> None:
 
             extracted_events = rec_res.get("extracted_events", [])
             for ev in extracted_events:
-                print(
-                    f"   [Extracted] {ev['event_type']} -> [{ev['subtype']}] key={ev['memory_key_fields']} "
-                    f"validity={ev['validity']} content={ev['content']}"
+                logger.info(
+                    "   [Extracted] %s -> [%s] key=%s validity=%s content=%s",
+                    ev["event_type"],
+                    ev["subtype"],
+                    ev["memory_key_fields"],
+                    ev["validity"],
+                    ev["content"],
                 )
             if not extracted_events:
-                print("   [Extracted] (None - OOD / No memory event)")
+                logger.info("   [Extracted] (None - OOD / No memory event)")
 
             eb_decay = rec_res.get("ebbinghaus_decay", {})
             if eb_decay.get("expired_candidates") or eb_decay.get("degraded_reinforced"):
-                print(f"   [Ebbinghaus Lifecycle] {eb_decay}")
+                logger.info("   [Ebbinghaus Lifecycle] %s", eb_decay)
 
             current_memories = dump_user_memories(ms, user_id, now_ts=last_ref_ts)
             for m in current_memories:
-                print(
-                    f"   * [{m['subtype']}] {m['memory_key']} | status={m['status']} (votes={m['votes']}, "
-                    f"R={m['retention']}, S={m['stability_factor']}) | "
-                    f"res={m['content'].get('resolution')} lat={m['content'].get('latency')} "
-                    f"tw={m['content'].get('time_window')} target={m['content'].get('target')}"
+                logger.info(
+                    "   * [%s] %s | status=%s (votes=%s, R=%s, S=%s) | res=%s lat=%s tw=%s target=%s",
+                    m["subtype"],
+                    m["memory_key"],
+                    m["status"],
+                    m["votes"],
+                    m["retention"],
+                    m["stability_factor"],
+                    m["content"].get("resolution"),
+                    m["content"].get("latency"),
+                    m["content"].get("time_window"),
+                    m["content"].get("target"),
                 )
 
             step_snapshots.append(
@@ -221,7 +239,7 @@ def run_sample_evaluation() -> None:
         query_evaluations = []
         for q_text, q_time in test_queries:
             q_ts = normalize_ts_str(q_time)
-            print(f"\n[Final Search Test] Query='{q_text}' @ {q_time} ({q_ts}):")
+            logger.info("[Final Search Test] Query='%s' @ %s (%s):", q_text, q_time, q_ts)
             hits = ms.search(
                 tenant_id="default",
                 user_id=user_id,
@@ -232,10 +250,18 @@ def run_sample_evaluation() -> None:
             )
             for rank, h in enumerate(hits, 1):
                 exp = h["explain"]
-                print(
-                    f"   #{rank} [{h['subtype']}] {h['memory_key']} (status={h['status']}) -> score={h['score']:.4f} "
-                    f"| sim={exp['sim']:.2f}, R={exp['freshness']:.4f} (S={exp['stability_factor']}), heat={exp['heat']:.4f} "
-                    f"| {exp['structured_match']}"
+                logger.info(
+                    "   #%d [%s] %s (status=%s) -> score=%.4f | sim=%.2f, R=%.4f (S=%s), heat=%.4f | %s",
+                    rank,
+                    h["subtype"],
+                    h["memory_key"],
+                    h["status"],
+                    h["score"],
+                    exp["sim"],
+                    exp["freshness"],
+                    exp["stability_factor"],
+                    exp["heat"],
+                    exp["structured_match"],
                 )
             query_evaluations.append(
                 {
@@ -267,9 +293,10 @@ def run_sample_evaluation() -> None:
 
     out_path = repo_root / "test" / "cross_memory_sample_report.json"
     out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nSaved full 2-sample chronological report to {out_path}")
+    logger.info("Saved full 2-sample chronological report to %s", out_path)
     ms.close()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     run_sample_evaluation()

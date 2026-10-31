@@ -9,6 +9,12 @@ from typing import Any, Dict, List, Optional, Set
 from ..core.logging_utils import JsonLinesLogger
 from ..core.models import Event, EventType
 from ..core.registry import MemoryRegistry
+from ..prompts.extraction_prompts import (
+    DEFAULT_EXTRACTION_FALLBACK_PROMPT,
+    EXTRACTION_SYSTEM_PROMPT,
+    build_extraction_user_prompt,
+    load_extraction_system_prompt,
+)
 from ..providers.llm import LLMProvider
 from .experience_extractor import (
     _CN_DURATION_MAP,
@@ -25,13 +31,17 @@ from .experience_extractor import (
 )
 
 __all__ = [
+    "DEFAULT_EXTRACTION_FALLBACK_PROMPT",
+    "EXTRACTION_SYSTEM_PROMPT",
     "Extractor",
     "_CN_DURATION_MAP",
     "_SINGLE_TASK_TIME_WORDS",
     "_STRONG_LONG_TERM_WORDS",
     "_TEMP_VETO_WORDS",
     "_WEAK_LONG_TERM_WORDS",
+    "build_extraction_user_prompt",
     "extract_time_window_from_text",
+    "load_extraction_system_prompt",
 ]
 
 
@@ -113,13 +123,9 @@ class Extractor:
         if self.llm is None or not session_turns:
             return []
 
-        system_prompt = (
-            self.prompt_path.read_text(encoding="utf-8")
-            if self.prompt_path.exists()
-            else "Extract memory events as JSON {'events': [...]}."
-        )
+        system_prompt = load_extraction_system_prompt(self.prompt_path)
         numbered_turns = self._ensure_turn_numbers(session_turns)
-        user_prompt = json.dumps({"session_id": session_id, "turns": numbered_turns}, ensure_ascii=False, indent=2)
+        user_prompt = build_extraction_user_prompt(session_id, numbered_turns)
 
         try:
             raw_obj = self.llm.chat_json(
@@ -189,24 +195,8 @@ class Extractor:
                 if kf not in content and kf in key_fields and key_fields[kf] not in (None, ""):
                     content[kf] = key_fields[kf]
 
-        ev_type = str(raw_ev.get("event_type", EventType.PREFERENCE_SET.value)).upper()
-        if ev_type in ("EXPLICIT_LONG_TERM_STATEMENT", "LONG_TERM_PREFERENCE", "SET"):
-            ev_type = EventType.PREFERENCE_SET.value
-        elif ev_type in ("PREFERENCE_REINFORCEMENT", "CONFIRM"):
-            ev_type = EventType.PREFERENCE_CONFIRM.value
-        elif ev_type in ("CORRECTION", "CORRECT"):
-            ev_type = EventType.PREFERENCE_CORRECT.value
-        elif ev_type in ("CLEAR", "DELETE"):
-            ev_type = EventType.PREFERENCE_CLEAR.value
-
-        ev_turns_raw = raw_ev.get("evidence_turns") or []
-        ev_turns: List[int] = []
-        for t in ev_turns_raw:
-            try:
-                ev_turns.append(int(t))
-            except (ValueError, TypeError):
-                continue
-
+        ev_type = self._normalize_event_type(raw_ev.get("event_type"))
+        ev_turns = [int(t) for t in (raw_ev.get("evidence_turns") or []) if str(t).lstrip("-").isdigit()]
         validity_str = str(
             raw_ev.get("validity") or raw_ev.get("validity_type") or content.get("validity") or "long_term"
         )
@@ -223,6 +213,19 @@ class Extractor:
             user_id=user_id,
             tenant_id=tenant_id,
         )
+
+    @staticmethod
+    def _normalize_event_type(raw_type: Any) -> str:
+        ev_type = str(raw_type or EventType.PREFERENCE_SET.value).upper()
+        if ev_type in ("EXPLICIT_LONG_TERM_STATEMENT", "LONG_TERM_PREFERENCE", "SET"):
+            return EventType.PREFERENCE_SET.value
+        if ev_type in ("PREFERENCE_REINFORCEMENT", "CONFIRM"):
+            return EventType.PREFERENCE_CONFIRM.value
+        if ev_type in ("CORRECTION", "CORRECT"):
+            return EventType.PREFERENCE_CORRECT.value
+        if ev_type in ("CLEAR", "DELETE"):
+            return EventType.PREFERENCE_CLEAR.value
+        return ev_type
 
     @staticmethod
     def _ensure_turn_numbers(session_turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -261,33 +264,24 @@ class Extractor:
                 if val not in (None, "", "_"):
                     event.memory_key_fields[kf] = val
             if val in (None, "", "_"):
-                self.logger.log(
-                    "extract_discard",
-                    reason="missing_memory_key_field",
-                    subtype=event.subtype,
-                    field=kf,
-                )
+                self.logger.log("extract_discard", reason="missing_memory_key_field", subtype=event.subtype, field=kf)
                 return False
             event.content.setdefault(kf, val)
 
         for rf in spec.required_fields:
             if event.content.get(rf) in (None, "", "_"):
-                self.logger.log(
-                    "extract_discard",
-                    reason="missing_required_field",
-                    subtype=event.subtype,
-                    field=rf,
-                )
+                self.logger.log("extract_discard", reason="missing_required_field", subtype=event.subtype, field=rf)
                 return False
 
+        return self._validate_constraints_and_evidence(event, session_turns)
+
+    def _validate_constraints_and_evidence(
+        self, event: Event, session_turns: Optional[List[Dict[str, Any]]]
+    ) -> bool:
         res = event.content.get("resolution")
         if res not in (None, "") and self._valid_resolutions:
             if str(res).strip().lower() not in self._valid_resolutions:
-                self.logger.log(
-                    "extract_discard",
-                    reason="invalid_resolution",
-                    resolution=res,
-                )
+                self.logger.log("extract_discard", reason="invalid_resolution", resolution=res)
                 return False
 
         app = event.content.get("application")
@@ -296,19 +290,12 @@ class Extractor:
             norm_app = self.normalize_app(app) or str(app)
             norm_biz = self.normalize_business(biz) or str(biz)
             if norm_app not in self.support_matrix:
-                self.logger.log(
-                    "extract_discard",
-                    reason="unsupported_application",
-                    application=app,
-                )
+                self.logger.log("extract_discard", reason="unsupported_application", application=app)
                 return False
             allowed_biz = [b.lower() for b in self.support_matrix.get(norm_app, [])]
             if norm_biz.lower() not in allowed_biz and str(biz).lower() not in allowed_biz:
                 self.logger.log(
-                    "extract_discard",
-                    reason="unsupported_app_business_pair",
-                    application=norm_app,
-                    business=biz,
+                    "extract_discard", reason="unsupported_app_business_pair", application=norm_app, business=biz
                 )
                 return False
 

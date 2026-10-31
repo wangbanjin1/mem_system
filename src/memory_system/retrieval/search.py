@@ -61,6 +61,8 @@ __all__ = [
     "_load_default_app_map",
     "_parse_relative_date_window",
     "_split_positive_and_negated_clauses",
+    "_cosine_similarity",
+    "build_search_text",
 ]
 
 
@@ -115,7 +117,7 @@ class SearchEngine:
             keys = list(_BIZ_PROTOTYPE_TEXTS.keys())
             texts = [_BIZ_PROTOTYPE_TEXTS[k] for k in keys]
             embs = self.embedding_provider.embed(texts)
-            self._biz_prototype_vecs = {k: emb for k, emb in zip(keys, embs)}
+            self._biz_prototype_vecs = dict(zip(keys, embs))
         except Exception:
             self._biz_prototype_vecs = {}
         return self._biz_prototype_vecs
@@ -257,43 +259,31 @@ class SearchEngine:
                 sub_list.append(spec.subtype)
         return list(dict.fromkeys(sub_list)), None
 
-    def search(
+    def _prepare_search_context(
         self,
         ns: Namespace,
         query: str,
-        top_k: int = 10,
-        levels: str = "L0+L1",
-        subtypes: Optional[Sequence[str]] = None,
-        memory_types: Optional[Sequence[str]] = None,
-        statuses: Optional[Sequence[str]] = None,
-        follow_edges: int = 0,
-        bump_heat: bool = True,
-        now_ts: Optional[str] = None,
-        query_slots: Optional[Dict[str, Any]] = None,
-        cascade_short_circuit: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Execute hybrid retrieval combining structured SQL SELECT, sliding-window vector recall, and FTS5."""
+        subtypes: Optional[Sequence[str]],
+        memory_types: Optional[Sequence[str]],
+        statuses: Optional[Sequence[str]],
+        now_ts: Optional[str],
+        query_slots: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Stage 1: Normalize timestamp, resolve type filters, and execute initial slot mining & SQL SELECT."""
         ts = normalize_ts_str(now_ts)
         resolved_subtypes, resolved_mtypes = self._resolve_type_filters(subtypes, memory_types)
+        slot_plan = self._mine_slots_and_resolve_two_hop(ns, query, now_ts=now_ts, query_slots=query_slots)
 
         sim_map: Dict[str, float] = {}
         select_sim_map: Dict[str, float] = {}
-        vector_sim_map: Dict[str, float] = {}
-        fts_sim_map: Dict[str, float] = {}
         structured_reasons: Dict[str, str] = {}
-
-        # 0. Two-stage personalized expression resolution + keyword slot mining + SQL SELECT (§2.5)
-        slot_plan = self._mine_slots_and_resolve_two_hop(
-            ns, query, now_ts=now_ts, query_slots=query_slots
-        )
-        expanded_query = slot_plan.get("expanded_query") or query
+        max_select_sim = 0.0
 
         for alias_mid, alias_reason in (slot_plan.get("alias_hit_ids") or {}).items():
             sim_map[alias_mid] = max(sim_map.get(alias_mid, 0.0), 0.88)
             select_sim_map[alias_mid] = max(select_sim_map.get(alias_mid, 0.0), 0.88)
             structured_reasons[alias_mid] = alias_reason
 
-        max_select_sim = 0.0
         if any(
             slot_plan.get(k)
             for k in ("applications", "businesses", "scenes", "time_windows", "relative_date_range")
@@ -324,9 +314,41 @@ class SearchEngine:
             except sqlite3.Error:
                 pass
 
-        vector_short_circuited = bool(cascade_short_circuit and max_select_sim >= 0.93)
+        return {
+            "ts": ts,
+            "resolved_subtypes": resolved_subtypes,
+            "resolved_mtypes": resolved_mtypes,
+            "slot_plan": slot_plan,
+            "expanded_query": slot_plan.get("expanded_query") or query,
+            "sim_map": sim_map,
+            "select_sim_map": select_sim_map,
+            "vector_sim_map": {},
+            "fts_sim_map": {},
+            "structured_reasons": structured_reasons,
+            "max_select_sim": max_select_sim,
+        }
 
-        # 1. Dense vector recall (scoped by ns, using 6~10 char sliding windows + Max-Pooling)
+    def _collect_raw_candidates(
+        self,
+        ns: Namespace,
+        ctx: Dict[str, Any],
+        top_k: int,
+        statuses: Optional[Sequence[str]],
+        cascade_short_circuit: bool,
+    ) -> bool:
+        """Stage 2: Execute multi-window vector recall, row-level slot projection, FTS5, and scoped candidate recall."""
+        sim_map: Dict[str, float] = ctx["sim_map"]
+        select_sim_map: Dict[str, float] = ctx["select_sim_map"]
+        vector_sim_map: Dict[str, float] = ctx["vector_sim_map"]
+        fts_sim_map: Dict[str, float] = ctx["fts_sim_map"]
+        structured_reasons: Dict[str, str] = ctx["structured_reasons"]
+        slot_plan: Dict[str, Any] = ctx["slot_plan"]
+        expanded_query: str = ctx["expanded_query"]
+        resolved_subtypes = ctx["resolved_subtypes"]
+        resolved_mtypes = ctx["resolved_mtypes"]
+
+        vector_short_circuited = bool(cascade_short_circuit and ctx["max_select_sim"] >= 0.93)
+
         if not vector_short_circuited and self.embedding_provider is not None and expanded_query.strip():
             try:
                 q_emb = self.embedding_provider.embed_one(expanded_query)
@@ -346,44 +368,15 @@ class SearchEngine:
                     sim_map[mid] = max(sim_map.get(mid, 0.0), float(v_sim))
                     vector_sim_map[mid] = max(vector_sim_map.get(mid, 0.0), float(v_sim))
 
-                # 1.5 Vector Similarity Retrieval & Row-Level Slot Projection -> Stage-2 Completion -> SQL SELECT
                 if self._adsorb_slots_from_vector_hits(
                     ns, slot_plan, vector_sim_map, q_emb, window_embeddings=window_embs
                 ):
-                    for alias_mid, alias_reason in (slot_plan.get("alias_hit_ids") or {}).items():
-                        sim_map[alias_mid] = max(sim_map.get(alias_mid, 0.0), 0.88)
-                        select_sim_map[alias_mid] = max(select_sim_map.get(alias_mid, 0.0), 0.88)
-                        structured_reasons[alias_mid] = alias_reason
-
-                    for mid, s_sim, s_reason in self.index.select_by_slots(
-                        ns,
-                        applications=slot_plan.get("applications"),
-                        businesses=slot_plan.get("businesses"),
-                        scenes=slot_plan.get("scenes"),
-                        time_windows=slot_plan.get("time_windows"),
-                        relative_date_range=slot_plan.get("relative_date_range"),
-                        subtypes=resolved_subtypes,
-                        memory_types=resolved_mtypes,
-                        statuses=statuses,
-                    ):
-                        f_ssim = float(s_sim)
-                        sim_map[mid] = max(sim_map.get(mid, 0.0), f_ssim)
-                        select_sim_map[mid] = max(select_sim_map.get(mid, 0.0), f_ssim)
-                        max_select_sim = max(max_select_sim, f_ssim)
-                        hop_prefix = ""
-                        if slot_plan.get("vector_anchor_hits"):
-                            anc_str = ", ".join(
-                                f"{h['anchor']}(cos={h['vector_sim']})->{h['target']}"
-                                for h in slot_plan["vector_anchor_hits"]
-                            )
-                            hop_prefix += f"[向量锚点吸附: {anc_str}] "
-                        if slot_plan.get("pointer_hops"):
-                            hop_prefix += f"[指针跳: {'; '.join(slot_plan['pointer_hops'])}] "
-                        structured_reasons[mid] = hop_prefix + s_reason
+                    self._apply_projected_slot_select(
+                        ns, slot_plan, sim_map, select_sim_map, structured_reasons, resolved_subtypes, resolved_mtypes, statuses
+                    )
             except Exception:
                 pass
 
-        # 2. Sparse FTS5 keyword recall (scoped by ns, using expanded_query)
         if expanded_query.strip():
             try:
                 for mid, f_sim in self.index.search_fts(
@@ -399,19 +392,62 @@ class SearchEngine:
             except sqlite3.Error:
                 pass
 
-        # 3. Also include scoped candidates from file/index if query is empty or keyword substring matches
-        scoped_ids = self.index.list_scoped_ids(
+        for mid in self.index.list_scoped_ids(
+            ns, subtypes=resolved_subtypes, memory_types=resolved_mtypes, statuses=statuses
+        ):
+            sim_map.setdefault(mid, 0.0)
+
+        return vector_short_circuited
+
+    def _apply_projected_slot_select(
+        self,
+        ns: Namespace,
+        slot_plan: Dict[str, Any],
+        sim_map: Dict[str, float],
+        select_sim_map: Dict[str, float],
+        structured_reasons: Dict[str, str],
+        resolved_subtypes: Optional[List[str]],
+        resolved_mtypes: Optional[List[str]],
+        statuses: Optional[Sequence[str]],
+    ) -> None:
+        for alias_mid, alias_reason in (slot_plan.get("alias_hit_ids") or {}).items():
+            sim_map[alias_mid] = max(sim_map.get(alias_mid, 0.0), 0.88)
+            select_sim_map[alias_mid] = max(select_sim_map.get(alias_mid, 0.0), 0.88)
+            structured_reasons[alias_mid] = alias_reason
+
+        for mid, s_sim, s_reason in self.index.select_by_slots(
             ns,
+            applications=slot_plan.get("applications"),
+            businesses=slot_plan.get("businesses"),
+            scenes=slot_plan.get("scenes"),
+            time_windows=slot_plan.get("time_windows"),
+            relative_date_range=slot_plan.get("relative_date_range"),
             subtypes=resolved_subtypes,
             memory_types=resolved_mtypes,
             statuses=statuses,
-        )
-        for mid in scoped_ids:
-            sim_map.setdefault(mid, 0.0)
+        ):
+            f_ssim = float(s_sim)
+            sim_map[mid] = max(sim_map.get(mid, 0.0), f_ssim)
+            select_sim_map[mid] = max(select_sim_map.get(mid, 0.0), f_ssim)
+            hop_prefix = ""
+            if slot_plan.get("vector_anchor_hits"):
+                anc_str = ", ".join(
+                    f"{h['anchor']}(cos={h['vector_sim']})->{h['target']}"
+                    for h in slot_plan["vector_anchor_hits"]
+                )
+                hop_prefix += f"[向量锚点吸附: {anc_str}] "
+            if slot_plan.get("pointer_hops"):
+                hop_prefix += f"[指针跳: {'; '.join(slot_plan['pointer_hops'])}] "
+            structured_reasons[mid] = hop_prefix + s_reason
 
-        if not sim_map:
-            return []
-
+    def _load_scoped_node_map(
+        self,
+        ns: Namespace,
+        sim_map: Dict[str, float],
+        resolved_subtypes: Optional[List[str]],
+        resolved_mtypes: Optional[List[str]],
+        statuses: Optional[Sequence[str]],
+    ) -> Dict[str, MemoryNode]:
         id_to_node: Dict[str, MemoryNode] = {}
         for node in self.filestore.iter_nodes(ns):
             if node.memory_id not in sim_map:
@@ -426,32 +462,47 @@ class SearchEngine:
             if resolved_mtypes and node.memory_type not in resolved_mtypes:
                 continue
             id_to_node[node.memory_id] = node
+        return id_to_node
 
-        scored_items: List[Dict[str, Any]] = []
-        q_low = (expanded_query or query or "").strip().lower()
+    def _score_and_filter_candidates(
+        self,
+        ns: Namespace,
+        query: str,
+        ctx: Dict[str, Any],
+        statuses: Optional[Sequence[str]],
+        vector_short_circuited: bool,
+    ) -> List[Dict[str, Any]]:
+        """Stage 3: Filter scoped nodes and compute Ebbinghaus retention, effective heat, and negation decay."""
+        sim_map: Dict[str, float] = ctx["sim_map"]
+        if not sim_map:
+            return []
+
+        id_to_node = self._load_scoped_node_map(
+            ns, sim_map, ctx["resolved_subtypes"], ctx["resolved_mtypes"], statuses
+        )
+        slot_plan: Dict[str, Any] = ctx["slot_plan"]
+        q_low = (ctx["expanded_query"] or query or "").strip().lower()
         neg_apps_set = set(slot_plan.get("negated_applications") or [])
         neg_bizs_set = set(slot_plan.get("negated_businesses") or [])
         neg_scenes_set = set(slot_plan.get("negated_scenes") or [])
         neg_aliases_set = set(slot_plan.get("negated_aliases") or [])
         neg_tws_list = list(slot_plan.get("negated_time_windows") or [])
 
+        scored_items: List[Dict[str, Any]] = []
         for mid, base_sim in sim_map.items():
             node = id_to_node.get(mid)
             if node is None:
                 continue
 
-            sim = evaluate_node_Trigger_boost(node, mid, base_sim, q_low, vector_sim_map, structured_reasons)
-            freshness, stability_factor, eff_lam = self._compute_freshness_and_stability(node, ts)
-            eff_heat = self._compute_effective_heat(node, ts)
+            sim = evaluate_node_Trigger_boost(
+                node, mid, base_sim, q_low, ctx["vector_sim_map"], ctx["structured_reasons"]
+            )
+            freshness, stability_factor, eff_lam = self._compute_freshness_and_stability(node, ctx["ts"])
+            eff_heat = self._compute_effective_heat(node, ctx["ts"])
             conf = float(node.confidence)
             lam = self._get_decay_lambda(node.subtype)
 
-            raw_score = (
-                self.alpha * sim
-                + self.beta * freshness
-                + self.gamma * eff_heat
-                + self.delta * conf
-            )
+            raw_score = self.alpha * sim + self.beta * freshness + self.gamma * eff_heat + self.delta * conf
             final_score = raw_score * self.temporary_weight if node.validity.type == "temporary" else raw_score
 
             n_app = str(node.content.get("application") or "").strip()
@@ -459,31 +510,30 @@ class SearchEngine:
             n_scene = str(node.content.get("scene") or node.content.get("environment") or "").strip()
             n_alias = str(node.content.get("alias") or node.content.get("source_expression") or "").strip()
             n_tw = str(node.content.get("time_window") or node.content.get("condition") or "").strip()
-            negation_penalized = False
-            if (
+            negation_penalized = bool(
                 (n_app and n_app in neg_apps_set)
                 or (n_biz and n_biz in neg_bizs_set)
                 or (n_scene and n_scene in neg_scenes_set)
                 or (n_alias and n_alias in neg_aliases_set)
                 or (n_tw and any(time_matches_window(ntw, n_tw) for ntw in neg_tws_list))
-            ):
+            )
+            if negation_penalized:
                 final_score *= 0.15
-                negation_penalized = True
 
             scored_items.append(
                 {
                     "node": node,
                     "sim": sim,
-                    "select_sim": select_sim_map.get(mid, 0.0),
-                    "vector_sim": vector_sim_map.get(mid, 0.0),
-                    "fts_sim": fts_sim_map.get(mid, 0.0),
+                    "select_sim": ctx["select_sim_map"].get(mid, 0.0),
+                    "vector_sim": ctx["vector_sim_map"].get(mid, 0.0),
+                    "fts_sim": ctx["fts_sim_map"].get(mid, 0.0),
                     "freshness": freshness,
                     "stability_factor": stability_factor,
                     "effective_lambda": eff_lam,
                     "heat": eff_heat,
                     "confidence": conf,
                     "decay_lambda": lam,
-                    "structured_match": structured_reasons.get(mid, ""),
+                    "structured_match": ctx["structured_reasons"].get(mid, ""),
                     "query_slot_plan": slot_plan,
                     "vector_short_circuited": vector_short_circuited,
                     "negation_penalized": negation_penalized,
@@ -492,21 +542,76 @@ class SearchEngine:
             )
 
         scored_items.sort(key=lambda x: x["final_score"], reverse=True)
-        top_items = scored_items[:top_k]
+        return scored_items
 
+    def _expand_and_format_results(
+        self,
+        ns: Namespace,
+        scored_items: List[Dict[str, Any]],
+        top_k: int,
+        levels: str,
+        follow_edges: int,
+        bump_heat: bool,
+    ) -> List[Dict[str, Any]]:
+        """Stage 4: Select top-k candidates, apply retrieval heat bump, and format tiered L0/L1/full results."""
         results: List[Dict[str, Any]] = []
-        for item in top_items:
+        for item in scored_items[:top_k]:
             node = item["node"]
             if bump_heat and self.heat_callback is not None:
                 try:
                     self.heat_callback(ns, node, self.heat_bump_on_hit)
                 except Exception:
                     pass
-
-            res_dict = self._format_result_item(ns, node, item, levels=levels, follow_edges=follow_edges)
-            results.append(res_dict)
-
+            results.append(self._format_result_item(ns, node, item, levels=levels, follow_edges=follow_edges))
         return results
+
+    def search(
+        self,
+        ns: Namespace,
+        query: str,
+        top_k: int = 10,
+        levels: str = "L0+L1",
+        subtypes: Optional[Sequence[str]] = None,
+        memory_types: Optional[Sequence[str]] = None,
+        statuses: Optional[Sequence[str]] = None,
+        follow_edges: int = 0,
+        bump_heat: bool = True,
+        now_ts: Optional[str] = None,
+        query_slots: Optional[Dict[str, Any]] = None,
+        cascade_short_circuit: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Execute hybrid retrieval combining structured SQL SELECT, sliding-window vector recall, and FTS5."""
+        ctx = self._prepare_search_context(
+            ns=ns,
+            query=query,
+            subtypes=subtypes,
+            memory_types=memory_types,
+            statuses=statuses,
+            now_ts=now_ts,
+            query_slots=query_slots,
+        )
+        vector_short_circuited = self._collect_raw_candidates(
+            ns=ns,
+            ctx=ctx,
+            top_k=top_k,
+            statuses=statuses,
+            cascade_short_circuit=cascade_short_circuit,
+        )
+        scored_items = self._score_and_filter_candidates(
+            ns=ns,
+            query=query,
+            ctx=ctx,
+            statuses=statuses,
+            vector_short_circuited=vector_short_circuited,
+        )
+        return self._expand_and_format_results(
+            ns=ns,
+            scored_items=scored_items,
+            top_k=top_k,
+            levels=levels,
+            follow_edges=follow_edges,
+            bump_heat=bump_heat,
+        )
 
     def _format_result_item(
         self,

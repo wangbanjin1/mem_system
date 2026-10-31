@@ -7,6 +7,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..pipeline.extractor import Extractor
 from ..pipeline.induction import InductionEngine
 from ..pipeline.updater import normalize_ts_str
+from ..prompts.induction_prompts import (
+    EXPRESSION_MAPPING_NOTE_TEMPLATE,
+    INDUCTION_SYSTEM_PROMPT,
+    PERIODIC_PREFERENCE_NOTE_TEMPLATE,
+    PREFERRED_VALUE_NOTE_TEMPLATE,
+    SCENE_PREFERENCE_NOTE_TEMPLATE,
+)
 from ..storage.filestore import FileStore
 from ..storage.index import MemoryIndex
 from .models import Event, EventType, MemoryNode, MemoryStatus
@@ -37,6 +44,24 @@ _CANONICAL_APP_CN: Dict[str, str] = {
     "tencentvideo": "腾讯视频",
     "migu": "咪咕",
 }
+
+__all__ = [
+    "EXPRESSION_MAPPING_NOTE_TEMPLATE",
+    "INDUCTION_SYSTEM_PROMPT",
+    "PERIODIC_PREFERENCE_NOTE_TEMPLATE",
+    "PREFERRED_VALUE_NOTE_TEMPLATE",
+    "SCENE_PREFERENCE_NOTE_TEMPLATE",
+    "_CANONICAL_APP_CN",
+    "_TRANSIENT_SCENE_MARKERS",
+    "_extract_expression_events",
+    "_extract_periodic_preference_events",
+    "_extract_service_to_app_events",
+    "_extract_temporary_context_events",
+    "align_scene_with_known",
+    "decompose_to_orthogonal_events",
+    "extract_clean_venue",
+    "run_llm_extract_and_induce_with_events",
+]
 
 
 def extract_clean_venue(user_text: str) -> str:
@@ -112,39 +137,17 @@ def _derive_event_from(
     )
 
 
-def decompose_to_orthogonal_events(
+def _extract_temporary_context_events(
     filestore: FileStore,
-    index: MemoryIndex,
-    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
     ns: Namespace,
     ev: Event,
-    turns: List[Dict[str, Any]],
-) -> List[Event]:
-    """Decompose a preference event into orthogonal, non-coupled memory events (Scheme A)."""
-    if ev.subtype not in (
-        "application_business",
-        "scene_preference",
-        "periodic_preference",
-        "preferred_value",
-        "experience_parameter",
-    ):
-        return [ev]
-
-    app = ev.content.get("application") or ev.memory_key_fields.get("application")
-    biz = ev.content.get("business") or ev.memory_key_fields.get("business")
-    if not app or not biz:
-        return [ev]
-
-    scene = str(ev.content.get("scene") or ev.memory_key_fields.get("scene") or "").strip()
-    tw = str(ev.content.get("time_window") or ev.content.get("condition") or "").strip()
-    decl_mode = ev.content.get("declaration_mode")
-
-    user_text = " ".join(
-        str(t.get("content") or t.get("text") or "")
-        for t in turns
-        if str(t.get("role", "user")).lower() == "user"
-    )
-
+    app: str,
+    biz: str,
+    scene: str,
+    tw: str,
+    user_text: str,
+) -> Tuple[str, str, Optional[MemoryNode], Optional[MemoryNode], Dict[str, Any]]:
+    """Resolve canonical business, normalize transient scene context, and locate existing param/periodic nodes."""
     if str(biz) in ("live", "openlive"):
         if "开直播" in user_text and "看直播" not in user_text:
             biz = "openlive"
@@ -175,6 +178,32 @@ def decompose_to_orthogonal_events(
         if scene and any(marker in scene for marker in _TRANSIENT_SCENE_MARKERS):
             scene = ""
 
+    existing_param, existing_periodic = _find_existing_param_and_periodic(filestore, ns, app, biz, scene, tw)
+    app_cn = _CANONICAL_APP_CN.get(str(app).lower(), str(app))
+    service_cn = _resolve_service_cn(biz, user_text, existing_param)
+    qos_fields: Dict[str, Any] = {"app_cn": app_cn, "service_cn": service_cn}
+    if (
+        existing_param is not None
+        and ev.validity != "temporary"
+        and ev.event_type != EventType.PREFERENCE_CORRECT.value
+    ):
+        for k in ("resolution", "latency", "priority", "bitrate"):
+            if existing_param.content.get(k) not in (None, ""):
+                qos_fields[k] = existing_param.content[k]
+    for k in ("resolution", "latency", "priority", "bitrate"):
+        if ev.content.get(k) not in (None, ""):
+            qos_fields[k] = ev.content[k]
+    return biz, scene, existing_param, existing_periodic, qos_fields
+
+
+def _find_existing_param_and_periodic(
+    filestore: FileStore,
+    ns: Namespace,
+    app: str,
+    biz: str,
+    scene: str,
+    tw: str,
+) -> Tuple[Optional[MemoryNode], Optional[MemoryNode]]:
     existing_param: Optional[MemoryNode] = None
     existing_periodic: Optional[MemoryNode] = None
     for node in filestore.iter_nodes(ns):
@@ -197,24 +226,69 @@ def decompose_to_orthogonal_events(
                 existing_periodic = node
             elif existing_periodic is None or node.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value):
                 existing_periodic = node
+    return existing_param, existing_periodic
 
-    app_cn = _CANONICAL_APP_CN.get(str(app).lower(), str(app))
-    service_cn = _resolve_service_cn(biz, user_text, existing_param)
-    qos_fields: Dict[str, Any] = {"app_cn": app_cn, "service_cn": service_cn}
-    if (
-        existing_param is not None
-        and ev.validity != "temporary"
-        and ev.event_type != EventType.PREFERENCE_CORRECT.value
-    ):
-        for k in ("resolution", "latency", "priority", "bitrate"):
-            if existing_param.content.get(k) not in (None, ""):
-                qos_fields[k] = existing_param.content[k]
-    for k in ("resolution", "latency", "priority", "bitrate"):
-        if ev.content.get(k) not in (None, ""):
-            qos_fields[k] = ev.content[k]
 
-    out_events: List[Event] = []
+def _migrate_single_vote_to_scene_preference(
+    filestore: FileStore,
+    index: MemoryIndex,
+    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
+    ns: Namespace,
+    ev: Event,
+    app: str,
+    biz: str,
+    scene: str,
+    existing_param: MemoryNode,
+    qos_fields: Dict[str, Any],
+) -> Event:
+    filestore.delete_node(ns, existing_param)
+    index.delete(existing_param.memory_id)
+    sc_content: Dict[str, Any] = {
+        "scene": scene,
+        "application": app,
+        "business": biz,
+        **qos_fields,
+        "validity": ev.validity,
+        "declaration_mode": "explicit",
+        "note": SCENE_PREFERENCE_NOTE_TEMPLATE.format(scene=scene, app=app, biz=biz),
+    }
+    seed_ev = Event(
+        event_type=EventType.PREFERENCE_SET.value,
+        subtype="scene_preference",
+        memory_key_fields={"scene": scene, "application": app, "business": biz},
+        content=sc_content,
+        validity="long_term",
+        confidence=existing_param.confidence,
+        source_session_id=existing_param.evidence[0] if existing_param.evidence else "",
+        user_id=ev.user_id,
+        tenant_id=ev.tenant_id,
+        event_time=existing_param.created_at,
+    )
+    apply_llm_event_fn(ns, seed_ev)
+    _bind_scene_to_existing_expressions(filestore, index, ns, app, biz, scene)
+    return _derive_event_from(
+        ev,
+        subtype="scene_preference",
+        memory_key_fields={"scene": scene, "application": app, "business": biz},
+        content=sc_content,
+        event_type=EventType.PREFERENCE_CONFIRM.value,
+    )
 
+
+def _extract_service_to_app_events(
+    filestore: FileStore,
+    index: MemoryIndex,
+    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
+    ns: Namespace,
+    ev: Event,
+    app: str,
+    biz: str,
+    scene: str,
+    existing_param: Optional[MemoryNode],
+    qos_fields: Dict[str, Any],
+    decl_mode: Any,
+) -> List[Event]:
+    """Build orthogonal scene_preference or preferred_value parameter events and migrate single-vote nodes."""
     if (
         existing_param is not None
         and existing_param.stats.votes == 1
@@ -222,226 +296,178 @@ def decompose_to_orthogonal_events(
         and (existing_param.subtype == "preferred_value" or existing_param.content.get("scene") != scene)
         and ev.validity != "temporary"
     ):
-        filestore.delete_node(ns, existing_param)
-        index.delete(existing_param.memory_id)
-
-        sc_content: Dict[str, Any] = {
-            "scene": scene,
-            "application": app,
-            "business": biz,
-            **qos_fields,
-            "validity": ev.validity,
-            "declaration_mode": "explicit",
-            "note": f"场景参数覆写：{scene} 下使用 {app} ({biz})",
-        }
-        seed_ev = Event(
-            event_type=EventType.PREFERENCE_SET.value,
-            subtype="scene_preference",
-            memory_key_fields={"scene": scene, "application": app, "business": biz},
-            content=sc_content,
-            validity="long_term",
-            confidence=existing_param.confidence,
-            source_session_id=existing_param.evidence[0] if existing_param.evidence else "",
-            user_id=ev.user_id,
-            tenant_id=ev.tenant_id,
-            event_time=existing_param.created_at,
-        )
-        apply_llm_event_fn(ns, seed_ev)
-
-        for expr_node in list(filestore.iter_nodes(ns, memory_type="preference", subtype="expression")):
-            if (
-                expr_node.content.get("application") == app
-                and expr_node.content.get("business") == biz
-                and not expr_node.content.get("scene")
-            ):
-                expr_node.content["scene"] = scene
-                filestore.save_node(ns, expr_node)
-                index.upsert(ns, expr_node)
-
-        out_events.append(
-            _derive_event_from(
-                ev,
-                subtype="scene_preference",
-                memory_key_fields={"scene": scene, "application": app, "business": biz},
-                content=sc_content,
-                event_type=EventType.PREFERENCE_CONFIRM.value,
+        return [
+            _migrate_single_vote_to_scene_preference(
+                filestore, index, apply_llm_event_fn, ns, ev, app, biz, scene, existing_param, qos_fields
             )
-        )
-    elif existing_param is not None and (not scene or existing_param.content.get("scene") == scene):
-        target_st = existing_param.subtype
-        if target_st == "scene_preference":
-            sc_val = str(existing_param.content.get("scene") or scene)
-            key_fields = {"scene": sc_val, "application": app, "business": biz}
-            content_out: Dict[str, Any] = {
-                "scene": sc_val,
-                "application": app,
-                "business": biz,
-                **qos_fields,
-                "validity": ev.validity,
-                "note": f"场景参数覆写：{sc_val} 下使用 {app} ({biz})",
-            }
-        else:
-            target_st = "preferred_value"
-            key_fields = {"application": app, "business": biz}
-            content_out = {
-                "application": app,
-                "business": biz,
-                **qos_fields,
-                "validity": ev.validity,
-                "note": f"默认参数偏好：{app} ({biz})",
-            }
-        if decl_mode:
-            content_out["declaration_mode"] = decl_mode
-        out_events.append(_derive_event_from(ev, subtype=target_st, memory_key_fields=key_fields, content=content_out))
-    elif scene:
-        sc_content_new: Dict[str, Any] = {
-            "scene": scene,
-            "application": app,
-            "business": biz,
-            **qos_fields,
-            "validity": ev.validity,
-            "note": f"场景参数覆写：{scene} 下使用 {app} ({biz})",
-        }
-        if decl_mode:
-            sc_content_new["declaration_mode"] = decl_mode
-        out_events.append(
-            _derive_event_from(
-                ev,
-                subtype="scene_preference",
-                memory_key_fields={"scene": scene, "application": app, "business": biz},
-                content=sc_content_new,
-            )
-        )
+        ]
+
+    if existing_param is not None and (not scene or existing_param.content.get("scene") == scene):
+        target_st = "scene_preference" if existing_param.subtype == "scene_preference" else "preferred_value"
+        sc_val = str(existing_param.content.get("scene") or scene) if target_st == "scene_preference" else ""
     else:
-        pv_content_new: Dict[str, Any] = {
+        target_st = "scene_preference" if scene else "preferred_value"
+        sc_val = scene
+
+    if target_st == "scene_preference":
+        key_fields = {"scene": sc_val, "application": app, "business": biz}
+        content_out: Dict[str, Any] = {
+            "scene": sc_val,
             "application": app,
             "business": biz,
             **qos_fields,
             "validity": ev.validity,
-            "note": f"默认参数偏好：{app} ({biz})",
+            "note": SCENE_PREFERENCE_NOTE_TEMPLATE.format(scene=sc_val, app=app, biz=biz),
         }
-        if decl_mode:
-            pv_content_new["declaration_mode"] = decl_mode
-        out_events.append(
-            _derive_event_from(
-                ev,
-                subtype="preferred_value",
-                memory_key_fields={"application": app, "business": biz},
-                content=pv_content_new,
-            )
-        )
+    else:
+        key_fields = {"application": app, "business": biz}
+        content_out = {
+            "application": app,
+            "business": biz,
+            **qos_fields,
+            "validity": ev.validity,
+            "note": PREFERRED_VALUE_NOTE_TEMPLATE.format(app=app, biz=biz),
+        }
+    if decl_mode:
+        content_out["declaration_mode"] = decl_mode
+    return [_derive_event_from(ev, subtype=target_st, memory_key_fields=key_fields, content=content_out)]
 
+
+def _bind_scene_to_existing_expressions(
+    filestore: FileStore, index: MemoryIndex, ns: Namespace, app: str, biz: str, scene: str
+) -> None:
+    for expr_node in list(filestore.iter_nodes(ns, memory_type="preference", subtype="expression")):
+        if (
+            expr_node.content.get("application") == app
+            and expr_node.content.get("business") == biz
+            and not expr_node.content.get("scene")
+        ):
+            expr_node.content["scene"] = scene
+            filestore.save_node(ns, expr_node)
+            index.upsert(ns, expr_node)
+
+
+def _extract_periodic_preference_events(
+    ev: Event,
+    app: str,
+    biz: str,
+    tw: str,
+    existing_periodic: Optional[MemoryNode],
+    qos_fields: Dict[str, Any],
+    decl_mode: Any,
+) -> List[Event]:
+    """Extract orthogonal periodic_preference pointer event when time_window is present."""
     cond_tw = tw
     if not cond_tw and existing_periodic is not None and ev.validity != "temporary":
         cond_tw = str(
             existing_periodic.content.get("time_window") or existing_periodic.content.get("condition") or ""
         ).strip()
 
-    if cond_tw and ev.validity != "temporary":
-        val_str = f"{app}:{biz}"
-        pp_ev_type = (
-            EventType.PREFERENCE_CONFIRM.value
-            if (
-                existing_periodic is not None
-                and existing_periodic.content.get("time_window") == cond_tw
-                and ev.event_type == EventType.PREFERENCE_SET.value
-            )
-            else ev.event_type
-        )
-        pp_content: Dict[str, Any] = {
-            "condition": cond_tw,
-            "value": val_str,
-            "time_window": cond_tw,
-            "application": app,
-            "business": biz,
-            "app_cn": app_cn,
-            "service_cn": service_cn,
-            "validity": ev.validity,
-            "note": f"周期时间路由：{cond_tw} -> {app} ({biz})",
-        }
-        if decl_mode:
-            pp_content["declaration_mode"] = decl_mode
-        out_events.append(
-            _derive_event_from(
-                ev,
-                subtype="periodic_preference",
-                memory_key_fields={"condition": cond_tw, "value": val_str},
-                content=pp_content,
-                event_type=pp_ev_type,
-            )
-        )
+    if not cond_tw or ev.validity == "temporary":
+        return []
 
+    val_str = f"{app}:{biz}"
+    pp_ev_type = (
+        EventType.PREFERENCE_CONFIRM.value
+        if (
+            existing_periodic is not None
+            and existing_periodic.content.get("time_window") == cond_tw
+            and ev.event_type == EventType.PREFERENCE_SET.value
+        )
+        else ev.event_type
+    )
+    pp_content: Dict[str, Any] = {
+        "condition": cond_tw,
+        "value": val_str,
+        "time_window": cond_tw,
+        "application": app,
+        "business": biz,
+        "app_cn": qos_fields["app_cn"],
+        "service_cn": qos_fields["service_cn"],
+        "validity": ev.validity,
+        "note": PERIODIC_PREFERENCE_NOTE_TEMPLATE.format(cond_tw=cond_tw, app=app, biz=biz),
+    }
+    if decl_mode:
+        pp_content["declaration_mode"] = decl_mode
+    return [
+        _derive_event_from(
+            ev,
+            subtype="periodic_preference",
+            memory_key_fields={"condition": cond_tw, "value": val_str},
+            content=pp_content,
+            event_type=pp_ev_type,
+        )
+    ]
+
+
+def decompose_to_orthogonal_events(
+    filestore: FileStore,
+    index: MemoryIndex,
+    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
+    ns: Namespace,
+    ev: Event,
+    turns: List[Dict[str, Any]],
+) -> List[Event]:
+    """Decompose a preference event into orthogonal, non-coupled memory events (Scheme A)."""
+    if ev.subtype not in (
+        "application_business",
+        "scene_preference",
+        "periodic_preference",
+        "preferred_value",
+        "experience_parameter",
+    ):
+        return [ev]
+
+    app = ev.content.get("application") or ev.memory_key_fields.get("application")
+    biz = ev.content.get("business") or ev.memory_key_fields.get("business")
+    if not app or not biz:
+        return [ev]
+
+    raw_scene = str(ev.content.get("scene") or ev.memory_key_fields.get("scene") or "").strip()
+    tw = str(ev.content.get("time_window") or ev.content.get("condition") or "").strip()
+    decl_mode = ev.content.get("declaration_mode")
+    user_text = " ".join(
+        str(t.get("content") or t.get("text") or "")
+        for t in turns
+        if str(t.get("role", "user")).lower() == "user"
+    )
+
+    biz, scene, existing_param, existing_periodic, qos_fields = _extract_temporary_context_events(
+        filestore, ns, ev, str(app), str(biz), raw_scene, tw, user_text
+    )
+
+    out_events = _extract_service_to_app_events(
+        filestore, index, apply_llm_event_fn, ns, ev, str(app), biz, scene, existing_param, qos_fields, decl_mode
+    )
+    out_events.extend(
+        _extract_periodic_preference_events(ev, str(app), biz, tw, existing_periodic, qos_fields, decl_mode)
+    )
     return out_events
 
 
-def run_llm_extract_and_induce_with_events(
-    extractor: Extractor,
-    filestore: FileStore,
-    induction: InductionEngine,
-    decompose_fn: Callable[[Namespace, Event, List[Dict[str, Any]]], List[Event]],
-    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
-    payload: Dict[str, Any],
-) -> Tuple[List[MemoryNode], List[Dict[str, Any]]]:
-    """Run LLM extraction, orthogonal event decomposition, inline alias binding, and cross-session induction."""
-    tenant_id = str(payload.get("tenant_id", "default"))
-    user_id = str(payload.get("user_id", ""))
-    session_id = str(payload.get("session_id", ""))
-    turns = list(payload.get("turns") or [])
-    session_ts = str(payload.get("session_ts") or normalize_ts_str(None))
-    has_concession = bool(payload.get("has_concession", False))
-    ns = user_namespace(user_id=user_id, tenant_id=tenant_id)
-
-    fp_events = [Event.from_dict(d) for d in (payload.get("fastpath_events") or [])]
-    llm_events = extractor.extract(
-        session_turns=turns,
-        session_id=session_id,
-        user_id=user_id,
-        tenant_id=tenant_id,
-    )
-
-    pref_events: List[Event] = []
+def _extract_expression_events(
+    fp_events: List[Event],
+    llm_events: List[Event],
+    turns: List[Dict[str, Any]],
+    last_param_node: Optional[MemoryNode],
+    session_id: str,
+    user_id: str,
+    tenant_id: str,
+    session_ts: str,
+) -> Dict[str, Event]:
+    """Collect and synthesize personalized expression alias events from fastpath, LLM, and inline patterns."""
     alias_by_key: Dict[str, Event] = {}
-    llm_pref_events = [
-        ev
-        for ev in llm_events
-        if ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
-    ]
-
     for ev in fp_events:
         if ev.event_type == EventType.EXPRESSION_ALIAS.value or ev.subtype == "expression":
             al = str(ev.memory_key_fields.get("alias") or ev.content.get("alias") or "").strip()
             if al:
                 alias_by_key[al] = ev
-        elif not llm_pref_events:
-            pref_events.append(ev)
 
     for ev in llm_events:
         if ev.event_type == EventType.EXPRESSION_ALIAS.value or ev.subtype == "expression":
             al = str(ev.memory_key_fields.get("alias") or ev.content.get("alias") or "").strip()
             if al and al not in alias_by_key:
                 alias_by_key[al] = ev
-        else:
-            pref_events.append(ev)
-
-    applied_nodes: List[MemoryNode] = []
-    applied_events: List[Dict[str, Any]] = []
-    last_param_node: Optional[MemoryNode] = None
-
-    for ev in pref_events:
-        ev.event_time = session_ts
-        if has_concession:
-            ev.is_concession = True
-        extractor._backfill_time_window(ev, turns)
-        extractor._backfill_qos_params(ev, turns)
-        extractor._normalize_validity(ev, turns)
-        ev.content["validity"] = ev.validity
-
-        for oev in decompose_fn(ns, ev, turns):
-            node = apply_llm_event_fn(ns, oev)
-            applied_nodes.append(node)
-            applied_events.append(oev.to_dict())
-            if node.subtype in ("preferred_value", "scene_preference"):
-                last_param_node = node
 
     if last_param_node is not None and last_param_node.validity.type != "temporary":
         user_text_combined = " ".join(
@@ -477,7 +503,19 @@ def run_llm_extract_and_induce_with_events(
                     tenant_id=tenant_id,
                     event_time=session_ts,
                 )
+    return alias_by_key
 
+
+def _apply_expression_alias_events(
+    filestore: FileStore,
+    ns: Namespace,
+    alias_by_key: Dict[str, Event],
+    last_param_node: Optional[MemoryNode],
+    session_ts: str,
+    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
+) -> Tuple[List[MemoryNode], List[Dict[str, Any]]]:
+    nodes_out: List[MemoryNode] = []
+    events_out: List[Dict[str, Any]] = []
     for alias_str, alias_ev in alias_by_key.items():
         alias_ev.event_time = session_ts
         alias_ev.validity = "long_term"
@@ -499,11 +537,80 @@ def run_llm_extract_and_induce_with_events(
                     alias_ev.content[slot_k] = scope_node.content[slot_k]
         for drop_k in ("parent_subtype", "parent_key", "time_window"):
             alias_ev.content.pop(drop_k, None)
-        alias_ev.content["note"] = f"表达映射：「{alias_str}」-> {alias_ev.content.get('target')}"
+        alias_ev.content["note"] = EXPRESSION_MAPPING_NOTE_TEMPLATE.format(
+            alias=alias_str, target=alias_ev.content.get("target")
+        )
 
         a_node = apply_llm_event_fn(ns, alias_ev)
-        applied_nodes.append(a_node)
-        applied_events.append(alias_ev.to_dict())
+        nodes_out.append(a_node)
+        events_out.append(alias_ev.to_dict())
+    return nodes_out, events_out
+
+
+def run_llm_extract_and_induce_with_events(
+    extractor: Extractor,
+    filestore: FileStore,
+    induction: InductionEngine,
+    decompose_fn: Callable[[Namespace, Event, List[Dict[str, Any]]], List[Event]],
+    apply_llm_event_fn: Callable[[Namespace, Event], MemoryNode],
+    payload: Dict[str, Any],
+) -> Tuple[List[MemoryNode], List[Dict[str, Any]]]:
+    """Run LLM extraction, orthogonal event decomposition, inline alias binding, and cross-session induction."""
+    tenant_id = str(payload.get("tenant_id", "default"))
+    user_id = str(payload.get("user_id", ""))
+    session_id = str(payload.get("session_id", ""))
+    turns = list(payload.get("turns") or [])
+    session_ts = str(payload.get("session_ts") or normalize_ts_str(None))
+    has_concession = bool(payload.get("has_concession", False))
+    ns = user_namespace(user_id=user_id, tenant_id=tenant_id)
+
+    fp_events = [Event.from_dict(d) for d in (payload.get("fastpath_events") or [])]
+    llm_events = extractor.extract(
+        session_turns=turns,
+        session_id=session_id,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    llm_pref_events = [
+        ev
+        for ev in llm_events
+        if ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
+    ]
+    pref_events = list(llm_pref_events) if llm_pref_events else [
+        ev
+        for ev in fp_events
+        if ev.event_type != EventType.EXPRESSION_ALIAS.value and ev.subtype != "expression"
+    ]
+
+    applied_nodes: List[MemoryNode] = []
+    applied_events: List[Dict[str, Any]] = []
+    last_param_node: Optional[MemoryNode] = None
+
+    for ev in pref_events:
+        ev.event_time = session_ts
+        if has_concession:
+            ev.is_concession = True
+        extractor._backfill_time_window(ev, turns)
+        extractor._backfill_qos_params(ev, turns)
+        extractor._normalize_validity(ev, turns)
+        ev.content["validity"] = ev.validity
+
+        for oev in decompose_fn(ns, ev, turns):
+            node = apply_llm_event_fn(ns, oev)
+            applied_nodes.append(node)
+            applied_events.append(oev.to_dict())
+            if node.subtype in ("preferred_value", "scene_preference"):
+                last_param_node = node
+
+    alias_by_key = _extract_expression_events(
+        fp_events, llm_events, turns, last_param_node, session_id, user_id, tenant_id, session_ts
+    )
+    a_nodes, a_events = _apply_expression_alias_events(
+        filestore, ns, alias_by_key, last_param_node, session_ts, apply_llm_event_fn
+    )
+    applied_nodes.extend(a_nodes)
+    applied_events.extend(a_events)
 
     induction.run_all(ns)
     return applied_nodes, applied_events

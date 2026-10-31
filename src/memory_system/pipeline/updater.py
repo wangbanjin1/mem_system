@@ -294,6 +294,38 @@ class MemoryUpdater:
         self._persist_node_and_index(ns, node, history_entry, event)
         return node
 
+    @staticmethod
+    def _merge_node_content(
+        ns: Namespace,
+        spec: MemoryTypeSpec,
+        node: MemoryNode,
+        event: Event,
+    ) -> None:
+        incoming_content = {**event.memory_key_fields, **event.content}
+        if ns.owner_type == "agent":
+            incoming_content = CaseSanitizer.sanitize(incoming_content)
+
+        old_content_snapshot = dict(node.content)
+        has_new_note_or_change = any(
+            v not in (None, "", [], {}) and old_content_snapshot.get(k) != v
+            for k, v in incoming_content.items()
+        )
+        is_implicit_non_corr = (
+            node.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value)
+            and incoming_content.get("declaration_mode") == "implicit"
+            and event.event_type != EventType.PREFERENCE_CORRECT.value
+        )
+        protected_fields = {"resolution", "latency", "time_window", "condition", "value"}
+        for k, v in incoming_content.items():
+            if v not in (None, "", [], {}):
+                if is_implicit_non_corr and k in protected_fields and node.content.get(k) not in (None, ""):
+                    continue
+                node.content[k] = v
+
+        if has_new_note_or_change or not node.description:
+            node.description = _format_description(spec, node.content, node.memory_key)
+        node.overview = _format_overview(node)
+
     def _update(
         self,
         ns: Namespace,
@@ -319,37 +351,7 @@ class MemoryUpdater:
         vote_delta, action, heat_delta = _VOTE.get(
             event.event_type, (+1, "set", +0.2)
         )
-
-        incoming_content = {**event.memory_key_fields, **event.content}
-        if ns.owner_type == "agent":
-            incoming_content = CaseSanitizer.sanitize(incoming_content)
-
-        # 2. Check content changes BEFORE merging so description (L0) never freezes (§4 Pitfall 4)
-        old_content_snapshot = dict(node.content)
-        has_new_note_or_change = False
-        for k, v in incoming_content.items():
-            if v not in (None, "", [], {}) and old_content_snapshot.get(k) != v:
-                has_new_note_or_change = True
-                break
-
-        # 3. Merge non-empty values into node.content
-        # Protect already-active/reinforced nodes from having their core QoS/routing fields
-        # overwritten by an implicit single-task event (unless it is an explicit PREFERENCE_CORRECT).
-        is_implicit_non_corr = (
-            node.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value)
-            and incoming_content.get("declaration_mode") == "implicit"
-            and event.event_type != EventType.PREFERENCE_CORRECT.value
-        )
-        protected_fields = {"resolution", "latency", "time_window", "condition", "value"}
-        for k, v in incoming_content.items():
-            if v not in (None, "", [], {}):
-                if is_implicit_non_corr and k in protected_fields and node.content.get(k) not in (None, ""):
-                    continue
-                node.content[k] = v
-
-        if has_new_note_or_change or not node.description:
-            node.description = _format_description(spec, node.content, node.memory_key)
-        node.overview = _format_overview(node)
+        self._merge_node_content(ns, spec, node, event)
 
         # 4. Accumulate votes
         node.stats.votes += vote_delta

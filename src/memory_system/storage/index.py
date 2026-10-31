@@ -60,6 +60,42 @@ class MemoryIndex:
         with self._lock:
             init_sqlite_schema(self._conn)
 
+    @staticmethod
+    def _build_vector_row_values(
+        ns: Namespace,
+        node: MemoryNode,
+        slot_cols: Dict[str, str],
+        pure_phrase: str,
+        tokenized_desc: str,
+        tokenized_search: str,
+        emb_json: str,
+    ) -> Tuple[Any, ...]:
+        return (
+            ns.owner_type,
+            ns.user_id,
+            ns.agent_id,
+            node.memory_type,
+            node.subtype,
+            node.memory_key,
+            node.status,
+            node.validity.type,
+            node.confidence,
+            node.stats.heat,
+            node.stats.last_heat_at,
+            node.stats.last_reinforced_at,
+            node.updated_at,
+            slot_cols["app_col"],
+            slot_cols["biz_col"],
+            slot_cols["scene_col"],
+            slot_cols["time_window_col"],
+            slot_cols["alias_col"],
+            slot_cols["target_col"],
+            pure_phrase,
+            tokenized_desc,
+            tokenized_search,
+            emb_json,
+        )
+
     def upsert(self, ns: Namespace, node: MemoryNode, embedding: Optional[Sequence[float]] = None) -> None:
         """Insert or update a MemoryNode and its FTS5 + structured slot projection in SQLite."""
         raw_search = build_search_text(node)
@@ -84,63 +120,26 @@ class MemoryIndex:
                 )
                 if embedding is None:
                     emb_json = existing["embedding_json"]
+                row_vals = self._build_vector_row_values(
+                    ns, node, slot_cols, pure_phrase, tokenized_desc, tokenized_search, emb_json
+                )
                 cur.execute(
                     """
                     UPDATE vector SET
-                        owner_type = ?,
-                        user_id = ?,
-                        agent_id = ?,
-                        memory_type = ?,
-                        subtype = ?,
-                        memory_key = ?,
-                        status = ?,
-                        validity = ?,
-                        confidence = ?,
-                        heat = ?,
-                        last_heat_at = ?,
-                        last_reinforced_at = ?,
-                        updated_at = ?,
-                        app_col = ?,
-                        biz_col = ?,
-                        scene_col = ?,
-                        time_window_col = ?,
-                        alias_col = ?,
-                        target_col = ?,
-                        phrase_text = ?,
-                        description = ?,
-                        search_text = ?,
-                        embedding_json = ?
+                        owner_type = ?, user_id = ?, agent_id = ?, memory_type = ?, subtype = ?,
+                        memory_key = ?, status = ?, validity = ?, confidence = ?, heat = ?,
+                        last_heat_at = ?, last_reinforced_at = ?, updated_at = ?, app_col = ?,
+                        biz_col = ?, scene_col = ?, time_window_col = ?, alias_col = ?,
+                        target_col = ?, phrase_text = ?, description = ?, search_text = ?, embedding_json = ?
                     WHERE rowid = ?
                     """,
-                    (
-                        ns.owner_type,
-                        ns.user_id,
-                        ns.agent_id,
-                        node.memory_type,
-                        node.subtype,
-                        node.memory_key,
-                        node.status,
-                        node.validity.type,
-                        node.confidence,
-                        node.stats.heat,
-                        node.stats.last_heat_at,
-                        node.stats.last_reinforced_at,
-                        node.updated_at,
-                        slot_cols["app_col"],
-                        slot_cols["biz_col"],
-                        slot_cols["scene_col"],
-                        slot_cols["time_window_col"],
-                        slot_cols["alias_col"],
-                        slot_cols["target_col"],
-                        pure_phrase,
-                        tokenized_desc,
-                        tokenized_search,
-                        emb_json,
-                        old_rowid,
-                    ),
+                    (*row_vals, old_rowid),
                 )
                 rowid = old_rowid
             else:
+                row_vals = self._build_vector_row_values(
+                    ns, node, slot_cols, pure_phrase, tokenized_desc, tokenized_search, emb_json
+                )
                 cur.execute(
                     """
                     INSERT INTO vector (
@@ -150,32 +149,7 @@ class MemoryIndex:
                         time_window_col, alias_col, target_col, phrase_text, description, search_text, embedding_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        node.memory_id,
-                        ns.owner_type,
-                        ns.user_id,
-                        ns.agent_id,
-                        node.memory_type,
-                        node.subtype,
-                        node.memory_key,
-                        node.status,
-                        node.validity.type,
-                        node.confidence,
-                        node.stats.heat,
-                        node.stats.last_heat_at,
-                        node.stats.last_reinforced_at,
-                        node.updated_at,
-                        slot_cols["app_col"],
-                        slot_cols["biz_col"],
-                        slot_cols["scene_col"],
-                        slot_cols["time_window_col"],
-                        slot_cols["alias_col"],
-                        slot_cols["target_col"],
-                        pure_phrase,
-                        tokenized_desc,
-                        tokenized_search,
-                        emb_json,
-                    ),
+                    (node.memory_id, *row_vals),
                 )
                 rowid = cur.lastrowid
 

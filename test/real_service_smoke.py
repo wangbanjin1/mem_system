@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import sys
 import tempfile
@@ -11,13 +12,21 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 from memory_system.api import MemorySystem
 
+logger = logging.getLogger(__name__)
+
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     tmp_dir = Path(tempfile.mkdtemp(prefix="memory_smoke_"))
-    print(f"[Smoke] Using temporary data_root: {tmp_dir}")
+    logger.info("[Smoke] Using temporary data_root: %s", tmp_dir)
     try:
         ms = MemorySystem(data_root=tmp_dir)
-        print(f"[Smoke] Loaded {len(ms.registry)} subtypes; LLM={ms.llm_provider.model}, Emb={ms.embedding_provider.model}")
+        logger.info(
+            "[Smoke] Loaded %d subtypes; LLM=%s, Emb=%s",
+            len(ms.registry),
+            ms.llm_provider.model,
+            ms.embedding_provider.model,
+        )
 
         # 1. Record a real session using DashScope qwen3.8-flash + text-embedding-v4
         res1 = ms.record_session(
@@ -38,7 +47,7 @@ def main() -> None:
                 },
             ],
         )
-        print("[Smoke] Session 1 recorded:", res1)
+        logger.info("[Smoke] Session 1 recorded: %s", res1)
 
         # 2. Record a temporary variant session (should NOT pollute the long-term 1080p node)
         res2 = ms.record_session(
@@ -59,7 +68,7 @@ def main() -> None:
                 },
             ],
         )
-        print("[Smoke] Session 2 (temporary variant) recorded:", res2)
+        logger.info("[Smoke] Session 2 (temporary variant) recorded: %s", res2)
 
         # 3. Search preference
         hits = ms.search(
@@ -69,18 +78,22 @@ def main() -> None:
             top_k=5,
             levels="full",
         )
-        print(f"[Smoke] Search returned {len(hits)} hits:")
+        logger.info("[Smoke] Search returned %d hits:", len(hits))
         for h in hits:
-            print(
-                f"  - [{h['subtype']}] key={h['memory_key']} status={h['status']} "
-                f"res={h['content'].get('resolution')} tw={h['content'].get('time_window')} "
-                f"score={h['score']}"
+            logger.info(
+                "  - [%s] key=%s status=%s res=%s tw=%s score=%s",
+                h["subtype"],
+                h["memory_key"],
+                h["status"],
+                h["content"].get("resolution"),
+                h["content"].get("time_window"),
+                h["score"],
             )
         assert hits, "Expected at least 1 search hit"
         top_ab = next((h for h in hits if h["subtype"] == "application_business"), hits[0])
         assert top_ab["content"].get("resolution") == "1080p", f"Expected 1080p, got {top_ab['content']}"
         assert top_ab["content"].get("time_window") == "12:30-13:30", f"Expected 12:30-13:30, got {top_ab['content']}"
-        print("[Smoke] SUCCESS: Real LLM + Embedding smoke test passed without variant pollution!")
+        logger.info("[Smoke] SUCCESS: Real LLM + Embedding smoke test passed without variant pollution!")
         ms.close()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

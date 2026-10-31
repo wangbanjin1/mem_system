@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..core.models import MemoryNode
 
@@ -80,14 +80,7 @@ def _cosine_similarity(vec_a: Sequence[float], vec_b: Sequence[float]) -> float:
 
 
 def build_pure_phrase_text(node: MemoryNode) -> str:
-    """Extract pure 4~12 character semantic trigger phrase (phrase_text) for high-discriminability embedding.
-
-    Args:
-        node: Authoritative memory node to extract trigger phrase from.
-
-    Returns:
-        Short natural-language phrase suitable for dense embedding indexing.
-    """
+    """Extract pure 4~12 character semantic trigger phrase (phrase_text) for high-discriminability embedding."""
     c = node.content or {}
     st = node.subtype
 
@@ -132,23 +125,9 @@ def build_pure_phrase_text(node: MemoryNode) -> str:
     return str(c.get("phrase_text") or node.description or node.memory_key or "").strip()
 
 
-def build_search_text(node: MemoryNode) -> str:
-    """Build semantic text for FTS5 from node fields and content (zero hardcoded synonym lists).
-
-    Args:
-        node: MemoryNode instance.
-
-    Returns:
-        Combined searchable text string.
-    """
-    c = node.content or {}
+def _extract_subtype_semantic_values(node: MemoryNode, c: Dict[str, Any], semantic_values: List[str]) -> None:
+    """Append subtype-specific searchable field values into semantic_values."""
     st = node.subtype
-    pure_phrase = build_pure_phrase_text(node)
-
-    semantic_values: List[str] = []
-    if pure_phrase:
-        semantic_values.append(pure_phrase)
-
     if st == "expression":
         alias = str(c.get("alias") or c.get("source_expression") or node.memory_key or "").strip()
         target = str(c.get("target") or "").strip()
@@ -173,35 +152,14 @@ def build_search_text(node: MemoryNode) -> str:
         for v in (loc, app_n, svc_n):
             if v and v not in semantic_values:
                 semantic_values.append(v)
-        for k in (
-            "start_timestamp",
-            "end_timestamp",
-            "duration",
-            "resolution",
-            "rtt_max",
-            "latency",
-            "summary",
-            "note",
-        ):
+        for k in ("start_timestamp", "end_timestamp", "duration", "resolution", "rtt_max", "latency", "summary", "note"):
             if c.get(k):
                 semantic_values.append(str(c[k]))
         t_aliases = c.get("temporal_reference_aliases")
         if isinstance(t_aliases, dict):
-            for av in t_aliases.values():
-                if av:
-                    semantic_values.append(str(av))
+            semantic_values.extend(str(av) for av in t_aliases.values() if av)
     elif st == "experience":
-        for k in (
-            "title",
-            "condition",
-            "action",
-            "description",
-            "content",
-            "strategy_type",
-            "domain",
-            "rule_type",
-            "causal_rationale",
-        ):
+        for k in ("title", "condition", "action", "description", "content", "strategy_type", "domain", "rule_type", "causal_rationale"):
             if c.get(k):
                 semantic_values.append(str(c[k]))
         trig = c.get("trigger_conditions")
@@ -218,6 +176,14 @@ def build_search_text(node: MemoryNode) -> str:
                 semantic_values.append(str(v))
             elif isinstance(v, (list, dict)):
                 semantic_values.append(json.dumps(v, ensure_ascii=False))
+
+
+def build_search_text(node: MemoryNode) -> str:
+    """Build semantic text for FTS5 from node fields and content (zero hardcoded synonym lists)."""
+    c = node.content or {}
+    pure_phrase = build_pure_phrase_text(node)
+    semantic_values: List[str] = [pure_phrase] if pure_phrase else []
+    _extract_subtype_semantic_values(node, c, semantic_values)
 
     parts: List[str] = [
         node.memory_key,

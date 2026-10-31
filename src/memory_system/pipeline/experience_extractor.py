@@ -11,6 +11,7 @@ from ..core.experience_rules import (
     trigger_matches,
 )
 from ..core.models import Event, EventType
+from ..prompts.experience_prompts import EXPERIENCE_EXTRACTION_SYSTEM_PROMPT
 
 # 1. Validity word lists (§2.6 & §4 Pitfall 2)
 _TEMP_VETO_WORDS = (
@@ -396,6 +397,7 @@ def extract_slow_path_experience(
 
 
 __all__ = [
+    "EXPERIENCE_EXTRACTION_SYSTEM_PROMPT",
     "EXPERIENCE_RULE_TYPES",
     "_CN_DURATION_MAP",
     "_SINGLE_TASK_TIME_WORDS",

@@ -82,6 +82,35 @@ class MaintenanceManager:
                 expired_ids.append(node.memory_id)
         return expired_ids
 
+    def _transition_ebbinghaus_status(
+        self,
+        ns: Namespace,
+        node: MemoryNode,
+        new_status: str,
+        action: str,
+        ts: str,
+        age_days: float,
+        retention: float,
+        stability_factor: Optional[float] = None,
+    ) -> str:
+        prev_st = node.status
+        node.status = new_status
+        node.updated_at = ts
+        entry: Dict[str, Any] = {
+            "ts": ts,
+            "action": action,
+            "prev_status": prev_st,
+            "status": node.status,
+            "age_days": round(age_days, 2),
+            "retention": round(retention, 4),
+        }
+        if stability_factor is not None:
+            entry["stability_factor"] = round(stability_factor, 4)
+        self.filestore.save_node(ns, node, history_entry=entry)
+        if self.index is not None:
+            self.index.upsert(ns, node)
+        return node.memory_id
+
     def apply_ebbinghaus_lifecycle_decay(
         self,
         ns: Namespace,
@@ -117,7 +146,7 @@ class MaintenanceManager:
 
             spec = self.registry.get(node.subtype)
             base_lam = spec.decay_lambda if spec is not None else 0.02
-            retention, stability_factor, eff_lam = compute_ebbinghaus_retention(
+            retention, stability_factor, _ = compute_ebbinghaus_retention(
                 decay_lambda=base_lam,
                 last_reinforced_at=node.stats.last_reinforced_at or node.updated_at or node.created_at,
                 now_ts=ts,
@@ -125,48 +154,31 @@ class MaintenanceManager:
                 reuse_count=node.stats.reuse_count,
             )
 
-            if node.status == MemoryStatus.CANDIDATE.value:
-                if age_days >= candidate_expire_days or (base_lam > 0 and retention < candidate_min_retention):
-                    prev_st = node.status
-                    node.status = MemoryStatus.EXPIRED.value
-                    node.updated_at = ts
-                    self.filestore.save_node(
+            if node.status == MemoryStatus.CANDIDATE.value and (
+                age_days >= candidate_expire_days or (base_lam > 0 and retention < candidate_min_retention)
+            ):
+                expired_candidates.append(
+                    self._transition_ebbinghaus_status(
+                        ns, node, MemoryStatus.EXPIRED.value, "ebbinghaus_candidate_expired", ts, age_days, retention
+                    )
+                )
+            elif (
+                node.status == MemoryStatus.REINFORCED.value
+                and age_days >= reinforced_degrade_days
+                and retention < reinforced_min_retention
+            ):
+                degraded_reinforced.append(
+                    self._transition_ebbinghaus_status(
                         ns,
                         node,
-                        history_entry={
-                            "ts": ts,
-                            "action": "ebbinghaus_candidate_expired",
-                            "prev_status": prev_st,
-                            "status": node.status,
-                            "age_days": round(age_days, 2),
-                            "retention": round(retention, 4),
-                        },
+                        MemoryStatus.ACTIVE.value,
+                        "ebbinghaus_reinforced_degraded",
+                        ts,
+                        age_days,
+                        retention,
+                        stability_factor,
                     )
-                    if self.index is not None:
-                        self.index.upsert(ns, node)
-                    expired_candidates.append(node.memory_id)
-
-            elif node.status == MemoryStatus.REINFORCED.value:
-                if age_days >= reinforced_degrade_days and retention < reinforced_min_retention:
-                    prev_st = node.status
-                    node.status = MemoryStatus.ACTIVE.value
-                    node.updated_at = ts
-                    self.filestore.save_node(
-                        ns,
-                        node,
-                        history_entry={
-                            "ts": ts,
-                            "action": "ebbinghaus_reinforced_degraded",
-                            "prev_status": prev_st,
-                            "status": node.status,
-                            "age_days": round(age_days, 2),
-                            "retention": round(retention, 4),
-                            "stability_factor": round(stability_factor, 4),
-                        },
-                    )
-                    if self.index is not None:
-                        self.index.upsert(ns, node)
-                    degraded_reinforced.append(node.memory_id)
+                )
 
         return {
             "expired_candidates": expired_candidates,

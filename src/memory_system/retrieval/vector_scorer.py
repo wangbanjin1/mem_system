@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from ..core.models import MemoryNode
 from ..core.namespace import Namespace
@@ -13,138 +13,141 @@ from .query_segmentation import _BIZ_PROTOTYPE_TEXTS, _QUERY_TIME_RE
 from .relational_expander import check_periodic_time_conflict, expand_relational_pointers
 
 
-def project_slots_from_vector_hits(
+def _extract_expression_row_slots(
+    row: Dict[str, Any],
+    mid: str,
+    v_sim: float,
     slot_rows: Sequence[Dict[str, Any]],
     slot_plan: Dict[str, Any],
-    vector_sim_map: Dict[str, float],
-    q_emb: Sequence[float],
-    window_embeddings: Optional[Sequence[Sequence[float]]],
-    biz_prototype_vecs: Dict[str, List[float]],
-    expand_apps_fn: Callable[[Sequence[str]], List[str]],
+    explicit_apps: Set[str],
+    explicit_bizs: Set[str],
+    negated_apps: Set[str],
+    negated_bizs: Set[str],
+    negated_aliases: Set[str],
+    negated_tws: Sequence[str],
 ) -> bool:
-    """Vector Similarity Retrieval & Row-Level Slot Projection -> Stage-2 Relational Completion."""
-    if not slot_rows:
+    alias = str(row.get("alias_col") or row.get("memory_key") or "").strip()
+    target = str(row.get("target_col") or "").strip()
+    resolved_aliases: Dict[str, str] = slot_plan["resolved_aliases"]
+    if not alias or not target or alias in resolved_aliases or alias in negated_aliases:
+        return False
+    bound_app = str(row.get("app_col") or "").strip()
+    bound_biz = str(row.get("biz_col") or "").strip()
+    bound_scene = str(row.get("scene_col") or "").strip()
+    if (explicit_apps and bound_app and bound_app not in explicit_apps) or (
+        explicit_bizs and bound_biz and bound_biz not in explicit_bizs
+    ):
+        return False
+    if bound_app in negated_apps or bound_biz in negated_bizs:
         return False
 
-    all_q_embs: List[Sequence[float]] = [w for w in (window_embeddings or []) if w]
-    if q_emb and not all_q_embs:
-        all_q_embs = [q_emb]
+    tw_matches = [m_tw.group(1) for m_tw in _QUERY_TIME_RE.finditer(target)]
+    if check_periodic_time_conflict(
+        slot_rows, tw_matches, explicit_apps, explicit_bizs, negated_apps, negated_bizs
+    ):
+        return False
 
-    apps: List[str] = slot_plan["applications"]
-    bizs: List[str] = slot_plan["businesses"]
-    scenes: List[str] = slot_plan["scenes"]
-    time_windows: List[str] = slot_plan["time_windows"]
-    resolved_aliases: Dict[str, str] = slot_plan["resolved_aliases"]
-    alias_hit_ids: Dict[str, str] = slot_plan["alias_hit_ids"]
-    pointer_hops: List[str] = slot_plan["pointer_hops"]
-    vector_anchor_hits: List[Dict[str, Any]] = slot_plan.setdefault("vector_anchor_hits", [])
-    explicit_apps = set(slot_plan.get("explicit_applications") or [])
-    explicit_bizs = set(slot_plan.get("explicit_businesses") or [])
-    negated_apps = set(slot_plan.get("negated_applications") or [])
-    negated_bizs = set(slot_plan.get("negated_businesses") or [])
-    negated_scenes = set(slot_plan.get("negated_scenes") or [])
-    negated_aliases = set(slot_plan.get("negated_aliases") or [])
-    negated_tws = list(slot_plan.get("negated_time_windows") or [])
-
+    resolved_aliases[alias] = target
+    scope_str = f" (作用域: {bound_app}|{bound_biz})" if bound_app or bound_biz else ""
+    slot_plan["alias_hit_ids"][mid] = f"向量锚点吸附词典(v_sim={v_sim:.2f}): {alias} -> {target}{scope_str}"
+    slot_plan.setdefault("vector_anchor_hits", []).append(
+        {
+            "memory_id": mid,
+            "subtype": "expression",
+            "anchor": alias,
+            "target": target,
+            "vector_sim": round(v_sim, 4),
+            "unlocked_slots": {
+                "application": bound_app,
+                "business": bound_biz,
+                "scene": bound_scene,
+                "target": target,
+            },
+        }
+    )
     changed = False
-
-    # 1. Extract slots from expression & scene_preference candidate rows via cross-window Max-Pooling similarity
-    for row in slot_rows:
-        mid = row.get("memory_id") or ""
-        st = row.get("subtype") or ""
-        v_sim = float(vector_sim_map.get(mid, 0.0))
-        if v_sim <= 0.0 and row.get("embedding_json") and all_q_embs:
-            try:
-                r_emb = json.loads(row["embedding_json"])
-                if r_emb:
-                    v_sim = max((_cosine_similarity(w_e, r_emb) for w_e in all_q_embs), default=0.0)
-            except (ValueError, TypeError):
-                v_sim = 0.0
-
-        if st == "expression" and v_sim >= 0.52:
-            alias = str(row.get("alias_col") or row.get("memory_key") or "").strip()
-            target = str(row.get("target_col") or "").strip()
-            if not alias or not target or alias in resolved_aliases or alias in negated_aliases:
-                continue
-            bound_app = str(row.get("app_col") or "").strip()
-            bound_biz = str(row.get("biz_col") or "").strip()
-            bound_scene = str(row.get("scene_col") or "").strip()
-            if explicit_apps and bound_app and bound_app not in explicit_apps:
-                continue
-            if explicit_bizs and bound_biz and bound_biz not in explicit_bizs:
-                continue
-            if bound_app in negated_apps or bound_biz in negated_bizs:
-                continue
-
-            tw_matches = [m_tw.group(1) for m_tw in _QUERY_TIME_RE.finditer(target)]
-            if check_periodic_time_conflict(
-                slot_rows, tw_matches, explicit_apps, explicit_bizs, negated_apps, negated_bizs
-            ):
-                continue
-
-            resolved_aliases[alias] = target
-            scope_str = f" (作用域: {bound_app}|{bound_biz})" if bound_app or bound_biz else ""
-            alias_hit_ids[mid] = f"向量锚点吸附词典(v_sim={v_sim:.2f}): {alias} -> {target}{scope_str}"
-            vector_anchor_hits.append(
-                {
-                    "memory_id": mid,
-                    "subtype": "expression",
-                    "anchor": alias,
-                    "target": target,
-                    "vector_sim": round(v_sim, 4),
-                    "unlocked_slots": {
-                        "application": bound_app,
-                        "business": bound_biz,
-                        "scene": bound_scene,
-                        "target": target,
-                    },
-                }
-            )
-            for m_tw in _QUERY_TIME_RE.finditer(target):
-                tw = m_tw.group(1)
-                if tw not in time_windows and not any(time_matches_window(tw, ntw) for ntw in negated_tws):
-                    time_windows.append(tw)
-                    changed = True
-            if bound_app and bound_app not in apps:
-                apps.append(bound_app)
-                changed = True
-            if bound_biz and bound_biz not in bizs:
-                bizs.append(bound_biz)
-                changed = True
-            if bound_scene and bound_scene not in scenes:
-                scenes.append(bound_scene)
-                changed = True
-
-        elif st in ("scene_preference", "environment", "working_record") and v_sim >= 0.42:
-            sc = str(row.get("scene_col") or "").strip()
-            if not sc or sc in scenes or sc in negated_scenes:
-                continue
-            s_app = str(row.get("app_col") or "").strip()
-            s_biz = str(row.get("biz_col") or "").strip()
-            if explicit_apps and s_app and s_app not in explicit_apps:
-                continue
-            if explicit_bizs and s_biz and s_biz not in explicit_bizs:
-                continue
-            if s_app in negated_apps or s_biz in negated_bizs:
-                continue
-            scenes.append(sc)
+    for tw in tw_matches:
+        if tw not in slot_plan["time_windows"] and not any(time_matches_window(tw, ntw) for ntw in negated_tws):
+            slot_plan["time_windows"].append(tw)
             changed = True
-            if s_app and s_app not in apps:
-                apps.append(s_app)
-            if s_biz and s_biz not in bizs:
-                bizs.append(s_biz)
-            vector_anchor_hits.append(
-                {
-                    "memory_id": mid,
-                    "subtype": st,
-                    "anchor": sc,
-                    "target": f"{s_app}|{s_biz}",
-                    "vector_sim": round(v_sim, 4),
-                    "unlocked_slots": {"scene": sc, "application": s_app, "business": s_biz},
-                }
-            )
+    for val, dst in ((bound_app, slot_plan["applications"]), (bound_biz, slot_plan["businesses"]), (bound_scene, slot_plan["scenes"])):
+        if val and val not in dst:
+            dst.append(val)
+            changed = True
+    return changed
 
-    # 2. Business Prototype Vector Bank matching (if business is still unresolved)
+
+def _extract_hit_row_slots(
+    row: Dict[str, Any],
+    v_sim: float,
+    slot_rows: Sequence[Dict[str, Any]],
+    slot_plan: Dict[str, Any],
+    explicit_apps: Set[str],
+    explicit_bizs: Set[str],
+    negated_apps: Set[str],
+    negated_bizs: Set[str],
+    negated_scenes: Set[str],
+    negated_aliases: Set[str],
+    negated_tws: Sequence[str],
+) -> bool:
+    """Extract row-level structured slot columns from a single high-similarity expression or scene row."""
+    mid = row.get("memory_id") or ""
+    st = row.get("subtype") or ""
+    if st == "expression" and v_sim >= 0.52:
+        return _extract_expression_row_slots(
+            row, mid, v_sim, slot_rows, slot_plan, explicit_apps, explicit_bizs, negated_apps, negated_bizs, negated_aliases, negated_tws
+        )
+
+    if st in ("scene_preference", "environment", "working_record") and v_sim >= 0.42:
+        sc = str(row.get("scene_col") or "").strip()
+        if not sc or sc in slot_plan["scenes"] or sc in negated_scenes:
+            return False
+        s_app = str(row.get("app_col") or "").strip()
+        s_biz = str(row.get("biz_col") or "").strip()
+        if (explicit_apps and s_app and s_app not in explicit_apps) or (
+            explicit_bizs and s_biz and s_biz not in explicit_bizs
+        ):
+            return False
+        if s_app in negated_apps or s_biz in negated_bizs:
+            return False
+        slot_plan["scenes"].append(sc)
+        if s_app and s_app not in slot_plan["applications"]:
+            slot_plan["applications"].append(s_app)
+        if s_biz and s_biz not in slot_plan["businesses"]:
+            slot_plan["businesses"].append(s_biz)
+        slot_plan.setdefault("vector_anchor_hits", []).append(
+            {
+                "memory_id": mid,
+                "subtype": st,
+                "anchor": sc,
+                "target": f"{s_app}|{s_biz}",
+                "vector_sim": round(v_sim, 4),
+                "unlocked_slots": {"scene": sc, "application": s_app, "business": s_biz},
+            }
+        )
+        return True
+
+    return False
+
+
+def _merge_projected_slot_candidates(
+    slot_rows: Sequence[Dict[str, Any]],
+    slot_plan: Dict[str, Any],
+    all_q_embs: Sequence[Sequence[float]],
+    biz_prototype_vecs: Dict[str, List[float]],
+    expand_apps_fn: Callable[[Sequence[str]], List[str]],
+    explicit_apps: Set[str],
+    explicit_bizs: Set[str],
+    negated_apps: Set[str],
+    negated_bizs: Set[str],
+    negated_tws: Sequence[str],
+    row_changed: bool,
+) -> bool:
+    """Match business prototype vectors if needed and execute stage-2 relational pointer expansion."""
+    bizs: List[str] = slot_plan["businesses"]
+    vector_anchor_hits: List[Dict[str, Any]] = slot_plan.setdefault("vector_anchor_hits", [])
+    changed = row_changed
+
     if not bizs and all_q_embs and biz_prototype_vecs:
         best_biz = ""
         best_sim = 0.0
@@ -172,13 +175,12 @@ def project_slots_from_vector_hits(
     if not changed:
         return False
 
-    # 3. Re-run Stage-2 Relational Completion on newly projected slots
     expand_relational_pointers(
         slot_rows=slot_rows,
-        apps=apps,
+        apps=slot_plan["applications"],
         bizs=bizs,
-        time_windows=time_windows,
-        pointer_hops=pointer_hops,
+        time_windows=slot_plan["time_windows"],
+        pointer_hops=slot_plan["pointer_hops"],
         explicit_apps=explicit_apps,
         explicit_bizs=explicit_bizs,
         negated_apps=negated_apps,
@@ -186,8 +188,75 @@ def project_slots_from_vector_hits(
         negated_time_windows=negated_tws,
         include_reverse_periodic=False,
     )
-    slot_plan["applications"] = expand_apps_fn(apps)
+    slot_plan["applications"] = expand_apps_fn(slot_plan["applications"])
     return True
+
+
+def project_slots_from_vector_hits(
+    slot_rows: Sequence[Dict[str, Any]],
+    slot_plan: Dict[str, Any],
+    vector_sim_map: Dict[str, float],
+    q_emb: Sequence[float],
+    window_embeddings: Optional[Sequence[Sequence[float]]],
+    biz_prototype_vecs: Dict[str, List[float]],
+    expand_apps_fn: Callable[[Sequence[str]], List[str]],
+) -> bool:
+    """Vector Similarity Retrieval & Row-Level Slot Projection -> Stage-2 Relational Completion."""
+    if not slot_rows:
+        return False
+
+    all_q_embs: List[Sequence[float]] = [w for w in (window_embeddings or []) if w]
+    if q_emb and not all_q_embs:
+        all_q_embs = [q_emb]
+
+    explicit_apps = set(slot_plan.get("explicit_applications") or [])
+    explicit_bizs = set(slot_plan.get("explicit_businesses") or [])
+    negated_apps = set(slot_plan.get("negated_applications") or [])
+    negated_bizs = set(slot_plan.get("negated_businesses") or [])
+    negated_scenes = set(slot_plan.get("negated_scenes") or [])
+    negated_aliases = set(slot_plan.get("negated_aliases") or [])
+    negated_tws = list(slot_plan.get("negated_time_windows") or [])
+
+    row_changed = False
+    for row in slot_rows:
+        mid = row.get("memory_id") or ""
+        v_sim = float(vector_sim_map.get(mid, 0.0))
+        if v_sim <= 0.0 and row.get("embedding_json") and all_q_embs:
+            try:
+                r_emb = json.loads(row["embedding_json"])
+                if r_emb:
+                    v_sim = max((_cosine_similarity(w_e, r_emb) for w_e in all_q_embs), default=0.0)
+            except (ValueError, TypeError):
+                v_sim = 0.0
+
+        if _extract_hit_row_slots(
+            row=row,
+            v_sim=v_sim,
+            slot_rows=slot_rows,
+            slot_plan=slot_plan,
+            explicit_apps=explicit_apps,
+            explicit_bizs=explicit_bizs,
+            negated_apps=negated_apps,
+            negated_bizs=negated_bizs,
+            negated_scenes=negated_scenes,
+            negated_aliases=negated_aliases,
+            negated_tws=negated_tws,
+        ):
+            row_changed = True
+
+    return _merge_projected_slot_candidates(
+        slot_rows=slot_rows,
+        slot_plan=slot_plan,
+        all_q_embs=all_q_embs,
+        biz_prototype_vecs=biz_prototype_vecs,
+        expand_apps_fn=expand_apps_fn,
+        explicit_apps=explicit_apps,
+        explicit_bizs=explicit_bizs,
+        negated_apps=negated_apps,
+        negated_bizs=negated_bizs,
+        negated_tws=negated_tws,
+        row_changed=row_changed,
+    )
 
 
 def format_search_result_item(
@@ -278,3 +347,12 @@ def evaluate_node_Trigger_boost(
                         f"经验触发条件匹配: keywords={matched_kws} (v_sim={vector_sim_map.get(mid, 0.0):.2f})"
                     )
     return sim
+
+
+__all__ = [
+    "_extract_hit_row_slots",
+    "_merge_projected_slot_candidates",
+    "evaluate_node_Trigger_boost",
+    "format_search_result_item",
+    "project_slots_from_vector_hits",
+]
