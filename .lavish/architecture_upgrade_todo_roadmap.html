@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="parchment">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>认知记忆系统演进路线图与待办清单 (Architecture Evolution TODOs)</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+  <style>
+    :root[data-theme="parchment"] {
+      --bg-page: #FBF7F0;
+      --bg-card: #FFFFFF;
+      --bg-subtle: #F3EDE2;
+      --bg-code: #F2ECE1;
+      --bg-accent: #FDF4E7;
+      --bg-success: #EDF7F1;
+      --bg-warn: #FEF6E6;
+      --bg-danger: #FDF0EF;
+      --text-main: #2A241E;
+      --text-secondary: #5C5248;
+      --text-muted: #8A7E72;
+      --border-main: #E2D9C8;
+      --border-strong: #C9B99F;
+      --primary: #8C4A27;
+      --primary-light: #F6E6DC;
+      --blue: #235789;
+      --blue-bg: #EBF3FA;
+      --green: #1F6E43;
+      --green-bg: #E8F5EE;
+      --amber: #9A5B13;
+      --amber-bg: #FDF3E3;
+      --red: #A63429;
+      --red-bg: #FDECEB;
+      --shadow: 0 2px 10px rgba(42, 36, 30, 0.05);
+    }
+
+    :root[data-theme="github"] {
+      --bg-page: #F6F8FA;
+      --bg-card: #FFFFFF;
+      --bg-subtle: #F0F3F6;
+      --bg-code: #F6F8FA;
+      --bg-accent: #EEF5FF;
+      --bg-success: #EBF8F0;
+      --bg-warn: #FFF8E6;
+      --bg-danger: #FFEFEE;
+      --text-main: #1F2328;
+      --text-secondary: #4D5562;
+      --text-muted: #6E7781;
+      --border-main: #D0D7DE;
+      --border-strong: #AFB8C1;
+      --primary: #0969DA;
+      --primary-light: #DDF4FF;
+      --blue: #0969DA;
+      --blue-bg: #DDF4FF;
+      --green: #1A7F37;
+      --green-bg: #DAFBE1;
+      --amber: #9A6700;
+      --amber-bg: #FFF8C5;
+      --red: #CF222E;
+      --red-bg: #FFEBE9;
+      --shadow: 0 1px 4px rgba(31, 35, 40, 0.06);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.65;
+      padding: 28px 36px 64px;
+      max-width: 1320px;
+      margin: 0 auto;
+    }
+
+    /* Top Header & Controls */
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 20px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid var(--border-main);
+      margin-bottom: 24px;
+    }
+
+    .title-group h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-main);
+      letter-spacing: -0.01em;
+    }
+
+    .title-group p {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border-strong);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .btn.active {
+      background: var(--primary);
+      color: #FFFFFF;
+      border-color: var(--primary);
+    }
+
+    /* Summary Strip */
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 26px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-main);
+      border-radius: 10px;
+      padding: 14px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .stat-card .label {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+
+    .stat-card .value {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--primary);
+      margin-top: 4px;
+    }
+
+    .stat-card .sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    /* TODO Item Container */
+    .todo-card {
+      background: var(--bg-card);
+      border: 1.5px solid var(--border-strong);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      margin-bottom: 28px;
+      overflow: hidden;
+    }
+
+    .todo-header {
+      background: var(--bg-subtle);
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border-main);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .todo-title-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .todo-badge {
+      background: var(--primary);
+      color: #FFFFFF;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.03em;
+    }
+
+    .todo-title {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .tag-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+    }
+
+    .tag-p0 {
+      background: var(--red-bg);
+      color: var(--red);
+      border-color: rgba(166, 52, 41, 0.25);
+    }
+
+    .tag-repo {
+      background: var(--blue-bg);
+      color: var(--blue);
+      border-color: rgba(35, 87, 137, 0.25);
+    }
+
+    .tag-paper {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border-color: rgba(154, 91, 19, 0.25);
+    }
+
+    .tag-status {
+      background: var(--green-bg);
+      color: var(--green);
+      border-color: rgba(31, 110, 67, 0.25);
+    }
+
+    .todo-body {
+      padding: 24px;
+    }
+
+    .section-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 22px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px dashed var(--border-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title:first-child {
+      margin-top: 0;
+    }
+
+    /* Comparison Grid */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 12px 0;
+    }
+
+    .compare-box {
+      border-radius: 10px;
+      padding: 16px 18px;
+      border: 1px solid var(--border-main);
+    }
+
+    .compare-box.pain {
+      background: var(--bg-danger);
+      border-color: rgba(166, 52, 41, 0.3);
+    }
+
+    .compare-box.target {
+      background: var(--bg-success);
+      border-color: rgba(31, 110, 67, 0.3);
+    }
+
+    .compare-box h4 {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .compare-box.pain h4 {
+      color: var(--red);
+    }
+
+    .compare-box.target h4 {
+      color: var(--green);
+    }
+
+    .compare-box ul {
+      padding-left: 18px;
+      font-size: 13.5px;
+      color: var(--text-main);
+    }
+
+    .compare-box li {
+      margin-bottom: 6px;
+    }
+
+    /* Architecture Diagram (Overflow-proof HTML + SVG Connectors) */
+    .arch-diagram {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-main);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 14px 0;
+    }
+
+    .arch-diagram-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .arch-columns {
+      display: grid;
+      grid-template-columns: 1fr 72px 1fr 72px 1.15fr;
+      align-items: stretch;
+      gap: 0;
+    }
+
+    .arch-node {
+      background: var(--bg-card);
+      border: 1.5px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .arch-node.user-node {
+      border-top: 4px solid var(--amber);
+    }
+
+    .arch-node.agent-node {
+      border-top: 4px solid var(--blue);
+    }
+
+    .arch-node.gate-node {
+      border-top: 4px solid var(--green);
+    }
+
+    .arch-node h5 {
+      font-size: 13.5px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text-main);
+    }
+
+    .arch-node p, .arch-node li {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+    }
+
+    .arch-node ul {
+      padding-left: 16px;
+      margin: 6px 0;
+    }
+
+    .arch-Forbidden {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: var(--red-bg);
+      color: var(--red);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .arch-Allowed {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: var(--green-bg);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .arch-arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      text-align: center;
+    }
+
+    .arch-arrow span {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+      line-height: 1.3;
+      margin-bottom: 4px;
+    }
+
+    /* Code & Sample Cards */
+    pre {
+      background: var(--bg-code);
+      border: 1px solid var(--border-main);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: var(--text-main);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    code {
+      font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      font-size: 12.5px;
+      background: var(--bg-code);
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 13.5px;
+    }
+
+    th, td {
+      border: 1px solid var(--border-main);
+      padding: 10px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--bg-subtle);
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    /* Checklist */
+    .checklist {
+      list-style: none;
+      padding-left: 0;
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-main);
+      border-radius: 8px;
+      font-size: 13.5px;
+    }
+
+    .check-box {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--primary);
+      border-radius: 4px;
+      flex-shrink: 0;
+      margin-top: 2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    /* Placeholder for next TODOs */
+    .next-todo-placeholder {
+      border: 2px dashed var(--border-strong);
+      border-radius: 12px;
+      padding: 20px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 960px) {
+      .summary-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .compare-grid {
+        grid-template-columns: 1fr;
+      }
+      .arch-columns {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .arch-arrow {
+        transform: rotate(90deg);
+        height: 40px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header class="top-bar">
+    <div class="title-group">
+      <h1>认知记忆系统演进路线图与待办清单 (Architecture Evolution TODOs)</h1>
+      <p>跨代码仓（<code>cross_memory_data</code> × <code>memory_system</code>）核心机制升级、文献启发落地与工程改造跟踪看板</p>
+    </div>
+    <div class="toolbar">
+      <button class="btn active" id="btn-parchment" onclick="setTheme('parchment')">暖阳米纸</button>
+      <button class="btn" id="btn-github" onclick="setTheme('github')">GitHub 简洁</button>
+    </div>
+  </header>
+
+  <!-- Summary Strip -->
+  <section class="summary-strip">
+    <div class="stat-card">
+      <div class="label">当前收录待办项</div>
+      <div class="value">1 项 (TODO #01)</div>
+      <div class="sub">随文献精读与实验反馈持续追加</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">TODO #01 核心目标</div>
+      <div class="value">信息隔离的双向渲染</div>
+      <div class="sub">解决全知视角泄密与快/慢路径动态交互评测</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">涉及工程仓</div>
+      <div class="value">双仓联动</div>
+      <div class="sub"><code>cross_memory_data</code> &amp; <code>memory_system</code></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">实证文献支撑</div>
+      <div class="value">τ²-Bench / UserProxyBench</div>
+      <div class="sub"><code>2506.07982</code> · <code>2609.38043</code> · <code>2610.24294</code></div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- TODO #01: 信息隔离的双向渲染 (Information-Isolated Dual-Control Rendering) -->
+  <!-- ===================================================================== -->
+  <article class="todo-card" id="todo-01">
+    <div class="todo-header">
+      <div class="todo-title-row">
+        <span class="todo-badge">TODO #01</span>
+        <h2 class="todo-title">信息隔离的双向渲染（Information-Isolated Dual-Control Rendering）</h2>
+      </div>
+      <div class="tag-row">
+        <span class="tag tag-p0">优先级：P0</span>
+        <span class="tag tag-repo">模块：DialogueGenerator &amp; 在线双路径评测器</span>
+        <span class="tag tag-paper">文献对标：τ²-Bench (2506.07982) / UserProxyBench (2609.38043)</span>
+        <span class="tag tag-status">状态：待实施 (Planned)</span>
+      </div>
+    </div>
+
+    <div class="todo-body">
+
+      <!-- 1. 现状痛点与设计动机 -->
+      <div class="section-title">1. 现状痛点与改造动机（为什么从“单模型全知写剧本”升级为“信息隔离双向渲染”？）</div>
+      <div class="compare-grid">
+        <div class="compare-box pain">
+          <h4>❌ 现状痛点：单模型全知视角剧本渲染 (Omniscient Single-LLM Script Rendering)</h4>
+          <ul>
+            <li><strong>User / Agent 视野未物理隔离</strong>：在 <code>cross_memory_data/src/generation/dialogue_generator.py</code> 中，同一个 LLM 同时接收完整的 <code>target_params</code>（含待测答案槽位）与 <code>snapshot_before</code>（历史记忆状态），一次性生成多轮 User 和 Agent 台词。</li>
+            <li><strong>首轮过早信息泄露（Premature Disclosure）风险</strong>：由于渲染 User Turn 1 时模型脑中装着最终答案（如 <code>resolution=1080p, duration=180min</code>），即便在 Prompt 中写满“严禁在第1轮提及画质与时长”，LLM 仍有概率在口语润色时顺嘴漏出答案或同义提示词（对应 <code>UserProxyBench</code> 实测高达 <code>24.4%</code> 的用户模拟器违规率）。</li>
+            <li><strong>慢路径与快路径无法在线动态切换</strong>：静态 JSONL 台词写死了轮数。在评测 <code>memory_system</code> 时，若被测 Agent 在本应走快路径的场次发起了追问（或反之），静态录好的 <code>Turn 2 User</code> 台词无法根据 Agent 的真实回复动态接话。</li>
+          </ul>
+        </div>
+        <div class="compare-box target">
+          <h4>✅ 目标机制：信息隔离的双向渲染 (Information-Isolated Dual-Control Rendering)</h4>
+          <ul>
+            <li><strong>物理级输入裁剪（Input-Level Information Isolation）</strong>：将会话状态显式拆分为 <strong>用户私有状态表（<code>User Private State</code>）</strong> 与 <strong>助手可见记忆状态（<code>Agent Observable Memory State</code>）</strong>，从输入字典层面物理剥离对方不该看见的字段。</li>
+            <li><strong>Turn 1 用户盲盒表达约束</strong>：生成或模拟 <code>User Turn 1</code> 时，输入中<strong>物理剔除</strong>本轮待通过记忆补全或待 Turn 2 澄清才揭晓的槽位，只传入本轮允许暴露的最小业务锚点与个性化表述映射（<code>expression</code>），从根源上令首轮泄露率降为 <code>0%</code>。</li>
+            <li><strong>支持快/慢双路径自适应对弈（Dual-Path Reactive Loop）</strong>：模拟用户持有条件反馈表（Conditional Response Policy）——若 Agent 在 Turn 1 已通过记忆补齐槽位并提议正确方案，User 直接确认闭环（快路径 2 轮）；若 Agent 发起追问或未触发经验偏移，User 按私有状态表在 Turn 2 补充/纠偏（慢路径 2~3 轮）。</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 2. 核心架构与数据流图 -->
+      <div class="section-title">2. 信息隔离双向渲染架构与数据流图</div>
+      <div class="arch-diagram">
+        <div class="arch-diagram-title">图 1：信息隔离的双向状态分配与多轮交互校验流水线（离线数据合成 &amp; 在线端到端评测通用架构）</div>
+        <div class="arch-columns">
+          <!-- Left: User Private State -->
+          <div class="arch-node user-node">
+            <div>
+              <h5>👤 用户侧受控视图 (User Private State)</h5>
+              <p>驱动 <code>User Turn Renderer / Simulator</code>：</p>
+              <ul>
+                <li><strong>Turn 1 显式暴露槽位 (<code>exposed_slots_t1</code>)</strong>：仅含当前场景最小锚点（如 <code>env="奥体中心"</code>、代称 <code>"开播保障"</code>）。</li>
+                <li><strong>Turn 2+ 待揭晓私有槽位 (<code>latent_private_slots</code>)</strong>：仅在 Agent 追问、消歧或未命中经验时才允许在 Turn 2 披露（如 <code>"提前30分钟预热"</code>、或指明选定哪笔历史工单）。</li>
+                <li><strong>人物语言风格 (<code>speech_style</code>)</strong>：语气、口头禅。</li>
+              </ul>
+            </div>
+            <div class="arch-Forbidden">
+              🚫 物理屏蔽：Turn 1 严禁传入待由记忆补全的 <code>resolution / rtt / duration</code> 真值，亦不可见 Agent 内部数据库结构。
+            </div>
+          </div>
+
+          <!-- Arrow 1 -->
+          <div class="arch-arrow">
+            <span>Turn 1 隐式表达<br/>Turn 2 条件反馈</span>
+            <svg width="56" height="28" viewBox="0 0 56 28">
+              <path d="M4 10 L46 10 M40 5 L48 10 L40 15" stroke="currentColor" stroke-width="2" fill="none" />
+              <path d="M52 18 L10 18 M16 13 L8 18 L16 23" stroke="currentColor" stroke-width="2" fill="none" />
+            </svg>
+          </div>
+
+          <!-- Middle: Agent Observable State -->
+          <div class="arch-node agent-node">
+            <div>
+              <h5>🤖 助手侧受控视图 (Agent Observable State)</h5>
+              <p>驱动 <code>Agent Turn Renderer / Memory Agent</code>：</p>
+              <ul>
+                <li><strong>实时对话上下文</strong>：截至当前轮次的用户历史发言。</li>
+                <li><strong>可见记忆检索卡片 (<code>retrieved_memory_cards</code>)</strong>：
+                  <ul>
+                    <li>事实记忆（<code>active / reinforced</code> 槽位与保持率 $R(t,n)$）</li>
+                    <li>工作记忆台账（<code>working_record</code> 候选列表）</li>
+                    <li>经验记忆规则卡（<code>experience</code> 触发条件与偏移量）</li>
+                  </ul>
+                </li>
+                <li><strong>必填槽位完备性规则</strong>：缺槽位或存在多单冲突时强制走慢路径追问。</li>
+              </ul>
+            </div>
+            <div class="arch-Forbidden">
+              🚫 物理屏蔽：严禁直接读取用户的 <code>ground_truth_slots</code> 答案表，只能依据用户已说出的话 + 检索到的记忆卡片推理。
+            </div>
+          </div>
+
+          <!-- Arrow 2 -->
+          <div class="arch-arrow">
+            <span>逐轮轨迹输出<br/>静态/动态拦截</span>
+            <svg width="56" height="24" viewBox="0 0 56 24">
+              <path d="M4 12 L48 12 M42 6 L50 12 L42 18" stroke="currentColor" stroke-width="2" fill="none" />
+            </svg>
+          </div>
+
+          <!-- Right: Dual Gate & Verification -->
+          <div class="arch-node gate-node">
+            <div>
+              <h5>🛡️ 双轨保真度与防泄漏守卫 (Fidelity &amp; Leakage Gate)</h5>
+              <p>基于 <code>UserProxyBench</code> 与确定性状态校验：</p>
+              <ul>
+                <li><strong>Gate 1：Turn 1 过早泄露静态拦截（Premature Disclosure Check）</strong>：扫描 <code>Turn 1 User Utterance</code>，断言其中绝不包含被标记为 <code>memory_filled</code> 或 <code>turn2_disambiguated</code> 的目标槽位字面量及数值。</li>
+                <li><strong>Gate 2：快/慢路径动作合规校验</strong>：
+                  <ul>
+                    <li>快路径场次：Agent Turn 1 必须完成记忆槽位展开并发起 <code>Confirm_Slot</code>；</li>
+                    <li>慢路径场次：Agent Turn 1 必须发起 <code>Request_Slot / Request_Disambiguation</code>，由 User Turn 2 揭晓私有槽位。</li>
+                  </ul>
+                </li>
+              </ul>
+            </div>
+            <div class="arch-Allowed">
+              ✅ 终态判定：比对对话收敛后的最终成交槽位 <code>final_slots</code> 与 <code>ground_truth_slots</code> 是否 100% 一致。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 真实样本举例 (Concrete Real-Sample Walkthrough) -->
+      <div class="section-title">3. 真实样本举例：同一套状态表如何同时驱动“离线防泄密渲染”与“快/慢双路径交互”？</div>
+      <p style="font-size: 13.5px; color: var(--text-secondary); margin-bottom: 10px;">
+        以 <code>USER_001（户外赛事摄影师）</code> 的两个典型会话为例，展示物理拆分后的输入字典与逐轮交互过程：
+      </p>
+
+      <div class="compare-grid">
+        <div>
+          <p style="font-size: 13px; font-weight: 700; color: var(--amber); margin-bottom: 6px;">
+            输入给 User 渲染器的受控字典（<code>user_private_view</code>）
+          </p>
+          <pre>{
+  "session_id": "S-08_implicit_reuse",
+  "turn_1_allowed_input": {
+    "scenario_env": "常规周期保障现场",
+    "exposed_expressions": ["午间例行", "老规矩"],
+    "exposed_anchors": {"application": "抖音", "service": "开直播"},
+    "strictly_hidden_in_turn_1": ["12:00~14:00", "120min", "1080p", "50ms"]
+  },
+  "turn_2_conditional_policy": {
+    "if_agent_proposes": {
+      "application_name": "抖音",
+      "service_name": "开直播",
+      "start_window": "12:00~14:00",
+      "duration": "120min",
+      "resolution": "1080p",
+      "rtt": "50ms"
+    },
+    "then_user_action": "Confirm_Slot (简短确认开通)",
+    "else_if_agent_asks_missing_slot": "按 ground_truth 补充缺失项并记录 Agent 记忆召回失败"
+  }
+}</pre>
+        </div>
+
+        <div>
+          <p style="font-size: 13px; font-weight: 700; color: var(--blue); margin-bottom: 6px;">
+            输入给 Agent 渲染器 / 被测系统的受控字典（<code>agent_observable_view</code>）
+          </p>
+          <pre>{
+  "session_id": "S-08_implicit_reuse",
+  "user_turn_1_utterance": "今天在常规周期保障现场，按‘午间例行’的时间，老规矩用抖音做开直播，帮我把保障开上。",
+  "retrieved_memory_snapshot": {
+    "periodic_preference": [
+      {"window_label": "午间例行", "time_range": "12:00-14:00", "app": "抖音", "service": "开直播", "status": "active", "retention": 0.94}
+    ],
+    "preferred_value": [
+      {"app": "抖音", "service": "开直播", "resolution": "1080p", "rtt": "50ms", "duration": "120min", "status": "reinforced", "retention": 0.96}
+    ]
+  },
+  "ground_truth_slots": "&lt;REDACTED_FROM_AGENT&gt;"
+}</pre>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 16%;">交互场景类型</th>
+            <th style="width: 28%;">Turn 1 User（仅见 <code>turn_1_allowed_input</code>）</th>
+            <th style="width: 28%;">Turn 1 Agent（仅见 <code>Turn 1 User + 记忆快照</code>）</th>
+            <th style="width: 28%;">Turn 2 User &amp; 闭环结果（受 <code>turn_2_policy</code> 约束）</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>场景 A：事实/经验快路径复用</strong><br/>（记忆库已含生效记录）</td>
+            <td>“今天在常规周期保障现场，按‘午间例行’的时间，老规矩用抖音开直播，把保障开上。”<br/><span style="color: var(--green); font-size: 12px;">✔ 物理未传入 <code>1080p/50ms/120min</code>，绝对零泄露</span></td>
+            <td>检索命中 <code>periodic_preference</code> 与 <code>preferred_value</code>，主动展开槽位：<br/>“收到，按您‘午间例行’的老规矩，为您预约今日 <strong>12:00至14:00（持续120分钟）</strong> 的抖音开直播保障，画质 <strong>1080p</strong>、时延 <strong>50ms以内</strong>，请确认是否开通？”</td>
+            <td>匹配 <code>if_agent_proposes</code> 成功：<br/>User：“对，就按这个老规矩直接开通吧。”<br/>Agent：“已为您开通本次保障。”（<strong>快路径 2 轮闭环</strong>）</td>
+          </tr>
+          <tr>
+            <td><strong>场景 B：工作记忆多单冲突 / 经验首次沉淀慢路径</strong><br/>（记忆库存在 2 笔同场馆不同规格工单，或首次遇大型场馆）</td>
+            <td>“今天15:00到17:00去会展中心用抖音开直播，按我之前在会展中心办过的那单规格来。”<br/><span style="color: var(--green); font-size: 12px;">✔ Turn 1 隐藏具体选哪笔历史单据</span></td>
+            <td>检索 <code>working_record</code> 发现会展中心有两笔历史工单（上周五 <code>1080p/50ms</code> vs. 上周二 <code>720p/100ms</code>），触发慢路径消歧：<br/>“查到您在会展中心有两笔历史保障单：一笔是上周五的 1080p/50ms，另一笔是上周二的 720p/100ms，请问本次按哪一笔规格办理？”</td>
+            <td>匹配 <code>Request_Disambiguation</code>，启用 <code>turn_2_latent_slots</code>：<br/>User：“按最近上周五那次 1080p、50ms 的规格来。”<br/>Agent 汇总确认后在第 3 轮完成开通，并沉淀消歧经验（<strong>慢路径 3 轮闭环</strong>）。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- 4. 具体工程改造与落地步骤 -->
+      <div class="section-title">4. 分步工程落地清单（Actionable Implementation Steps）</div>
+      <ul class="checklist">
+        <li class="checklist-item">
+          <span class="check-box">1</span>
+          <div>
+            <strong>Step 1（数据侧 <code>cross_memory_data</code>）：重构视图投影函数 <code>build_isolated_views(s_plan, snapshot_before)</code></strong><br/>
+            在 <code>src/generation/dialogue_generator.py</code> 中，将原本直接传给 Prompt 的全量 <code>s_plan</code> 拆分为 <code>user_turn1_view</code>（物理剥离待由记忆补全的 <code>resolution / rtt / duration / target_app</code> 字段）、<code>agent_view</code>（仅注入 <code>snapshot_before</code> 生效记忆卡）与 <code>user_turn2_view</code>（仅在 Turn 2 传入确认或纠偏参数）。
+          </div>
+        </li>
+        <li class="checklist-item">
+          <span class="check-box">2</span>
+          <div>
+            <strong>Step 2（校验侧 <code>cross_memory_data</code>）：新增 <code>PrematureDisclosureValidator</code>（首轮过早信息泄露拦截器）</strong><br/>
+            在 <code>src/validation/qc_validator.py</code>（及 <code>dialogue_generator.py</code> 的 <code>_validate_rendered_turns</code>）中，借鉴 <code>UserProxyBench (2609.38043)</code> 的 <code>UFS</code> 指标，针对所有复用/强化/消歧会话，静态扫描 <code>turns[0]["user_utterance"]</code>：凡出现本应由记忆检索或 Turn 2 澄清才产生的槽位字面量，直接判定为 <code>Premature Disclosure</code> 并触发单会话重生成。
+          </div>
+        </li>
+        <li class="checklist-item">
+          <span class="check-box">3</span>
+          <div>
+            <strong>Step 3（评测侧 <code>memory_system</code>）：构建轻量级 <code>EnvironmentCoupledUserSimulator</code> 支持快/慢双路径在线对弈评测</strong><br/>
+            在 <code>memory_system/scripts/</code> 下新增双向控制在线评测脚本：被测 Agent 每轮调用真实的 <code>MemorySystem.search()</code> 获取记忆上下文并生成回复；<code>UserSimulator</code> 仅持有当前测试样本的 <code>user_private_view</code>，根据被测 Agent 在 Turn 1 是“直接给出完整参数（快路径）”还是“发起反问澄清（慢路径）”动态生成 Turn 2 回复，最终以双方收敛后的结构化订单槽位比对 Ground-Truth 计算端到端通过率。
+          </div>
+        </li>
+      </ul>
+
+    </div>
+  </article>
+
+  <!-- Placeholder for upcoming TODO items -->
+  <div class="next-todo-placeholder">
+    ➕ <strong>后续待办槽位（TODO #02, #03...）已预留</strong>：随着我们继续浏览文献或推进实验，可随时将新的算法改进点（如 <code>AgentMemGate</code> 未决推测写入门控、<code>AMIE</code> 基于下游采纳反馈的热度升降温等）追加至此看板。
+  </div>
+
+  <script>
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.getElementById('btn-parchment').classList.toggle('active', theme === 'parchment');
+      document.getElementById('btn-github').classList.toggle('active', theme === 'github');
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      if (typeof renderMathInElement === 'function') {
+        renderMathInElement(document.body, {
+          delimiters: [
+            { left: "$$", right: "$$", display: true },
+            { left: "$", right: "$", display: false }
+          ],
+          throwOnError: false
+        });
+      }
+    });
+  </script>
+</body>
+</html>
