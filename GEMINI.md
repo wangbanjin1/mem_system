@@ -14,6 +14,7 @@
 - **关联上下游仓库**：
   - 上游合成数据集：`D:\coding\cross_memory_data`（`data/cognitive_samples`）
   - 下游意图理解与端到端评测：`D:\coding\qwen_intent_rag`（通过 `memory_bridge.py` 桥接调用本仓 API）
+- **Git 分支工作流**：`main` 分支已归档当前三层认知记忆稳定基线（Tag：`v1.0.0-three-tier-baseline`）；后续任何新特性开发（如 `TODO #01 信息隔离的双向渲染` 及在线双路径评测）**必须先从 `main` 单独拉取 `feature/<topic>` 分支进行开发验证**，严禁直接在 `main` 主干上修改实验代码。
 
 ---
 
