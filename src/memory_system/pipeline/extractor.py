@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ..core.experience_rules import extract_slow_path_experience_rule
 from ..core.logging_utils import JsonLinesLogger
 from ..core.models import Event, EventType, now_utc_str
 from ..core.registry import MemoryRegistry
@@ -698,3 +699,20 @@ class Extractor:
                     return False
 
         return True
+
+    def extract_slow_path_experience(
+        self,
+        session_turns: List[Dict[str, Any]],
+        session_id: str = "",
+        session_ts: str = "",
+        ref_year: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Extract a general slow-path causal revision & parameter adjustment rule card from multi-turn turns."""
+        numbered = self._ensure_turn_numbers(session_turns)
+        return extract_slow_path_experience_rule(
+            turns=numbered,
+            session_id=session_id,
+            session_ts=session_ts,
+            ref_year=ref_year,
+        )
+

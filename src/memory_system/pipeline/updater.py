@@ -23,7 +23,7 @@ from ..core.registry import MemoryRegistry, MemoryTypeSpec
 from ..providers.embedding import EmbeddingProvider
 from ..storage.filestore import FileStore
 from ..storage.graph import GraphStore
-from ..storage.index import MemoryIndex, build_search_text
+from ..storage.index import MemoryIndex, build_pure_phrase_text, build_search_text
 from .sanitizer import CaseSanitizer
 
 
@@ -504,7 +504,8 @@ class MemoryUpdater:
             emb = None
             if self.embedding_provider is not None:
                 try:
-                    emb = self.embedding_provider.embed_one(build_search_text(node))
+                    phrase_txt = build_pure_phrase_text(node) or build_search_text(node)
+                    emb = self.embedding_provider.embed_one(phrase_txt)
                 except Exception:
                     emb = None
             self.index.upsert(ns, node, embedding=emb)

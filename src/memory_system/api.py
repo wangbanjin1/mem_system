@@ -21,13 +21,13 @@ from .pipeline.sanitizer import CaseSanitizer
 from .pipeline.updater import MemoryUpdater, normalize_ts_str
 from .providers.embedding import EmbeddingProvider
 from .providers.llm import LLMProvider
-from .core.experience_rules import trigger_matches
+from .core.experience_rules import match_active_experience_card, trigger_matches
 from .core.working_rules import classify_working_record_reference
 from .retrieval.router import QueryRouter
 from .retrieval.search import SearchEngine
 from .storage.filestore import FileStore
 from .storage.graph import GraphStore
-from .storage.index import MemoryIndex, build_search_text
+from .storage.index import MemoryIndex, build_pure_phrase_text, build_search_text
 
 
 # Fallback mapping from strategy_type to domain when experience card omits domain (§2.7, api.py:368-416)
@@ -477,36 +477,18 @@ class MemorySystem:
         u_later_text = " ".join(user_turns_text[1:]) if len(user_turns_text) > 1 else ""
         u_all_text = " ".join(user_turns_text)
 
-        # 1. Experience Learning Crystallization (Multi-turn slow clarification branch -> crystallize EXP_*)
-        # Trigger keyword groups live in each experience card (crystallize_trigger), never inline literals.
+        # 1. Slow-Path Experience Rule Induction (Multi-turn slow clarification -> extract adjustment rule)
         ref_year = _ref_year_of(raw_ref_ts)
-        crystallized_exp_id: Optional[str] = None
-        for _eid, _tpl in _BUILTIN_EXPERIENCE_TEMPLATES.items():
-            if trigger_matches(_tpl, "crystallize_trigger", u1_text, u_later_text, ref_year):
-                crystallized_exp_id = _eid
-                break
-
-        if crystallized_exp_id and crystallized_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
+        induced_card = self.extractor.extract_slow_path_experience(
+            session_turns=turns,
+            session_id=session_id,
+            session_ts=session_ts,
+            ref_year=ref_year,
+        )
+        if induced_card is not None:
             is_non_pref = True
-            card = dict(_BUILTIN_EXPERIENCE_TEMPLATES[crystallized_exp_id])
-            rec_adj = dict(card.get("recommended_adjustments") or {})
-            if crystallized_exp_id == "EXP_PREWARM_BUFFER_01":
-                m_min = re.search(r"提前\s*(\d+)\s*分钟", u_later_text)
-                if m_min:
-                    buf_m = int(m_min.group(1))
-                elif "提前一个半小时" in u_later_text or "提前1.5小时" in u_later_text:
-                    buf_m = 90
-                elif "提前一小时" in u_later_text or "提前1小时" in u_later_text or "提前1个小时" in u_later_text:
-                    buf_m = 60
-                elif "提前一刻钟" in u_later_text:
-                    buf_m = 15
-                else:
-                    buf_m = 30
-                rec_adj["start_offset_minutes"] = -buf_m
-                rec_adj["duration_add_minutes"] = buf_m
-            card["recommended_adjustments"] = rec_adj
-            card["event_time"] = session_ts
-            card["source_session_id"] = session_id
+            card = dict(induced_card)
+            crystallized_exp_id = str(card.get("experience_id") or "")
             nodes = self.ingest_experience_cards(ns.tenant_id, ns.user_id, [card])
             for n in nodes:
                 node_ids_out.append(n.memory_id)
@@ -521,30 +503,29 @@ class MemorySystem:
                 )
             return is_non_pref, events_out, node_ids_out
 
-        # 2. Experience Fast-Path Application (2-turn fast-loop reuse of active EXP_*)
-        active_exps = {
-            str(n.content.get("experience_id") or ""): n
+        # 2. Experience Fast-Path Application (2-turn fast-loop reuse of user's active stored experience cards)
+        active_exp_nodes = [
+            n
             for n in self.filestore.iter_nodes(ns, memory_type="experience_memory", subtype="experience")
             if n.status in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value)
-        }
-        applied_exp_id: Optional[str] = None
-        for _eid, _tpl in _BUILTIN_EXPERIENCE_TEMPLATES.items():
-            if _eid not in active_exps:
-                continue
-            # Prefer the trigger stored on the user's active card; fall back to the builtin template.
-            _card = dict(_tpl)
-            _card.update({k: v for k, v in (active_exps[_eid].content or {}).items() if k.endswith("_trigger")})
-            if trigger_matches(_card, "apply_trigger", u1_text, u_later_text, ref_year):
-                applied_exp_id = _eid
-                break
+        ]
+        active_cards_list: List[Dict[str, Any]] = []
+        for n in active_exp_nodes:
+            c_dict = dict(n.content or {})
+            eid = str(c_dict.get("experience_id") or "")
+            if eid in _BUILTIN_EXPERIENCE_TEMPLATES:
+                merged = dict(_BUILTIN_EXPERIENCE_TEMPLATES[eid])
+                merged.update(c_dict)
+                c_dict = merged
+            active_cards_list.append(c_dict)
 
-        if applied_exp_id and applied_exp_id in _BUILTIN_EXPERIENCE_TEMPLATES:
+        matched_active_card = match_active_experience_card(
+            active_cards_list, u1_text, u_later_text, ref_year=ref_year
+        )
+        if matched_active_card is not None:
             is_non_pref = True
-            card = dict(_BUILTIN_EXPERIENCE_TEMPLATES[applied_exp_id])
-            if applied_exp_id in active_exps and isinstance(active_exps[applied_exp_id].content, dict):
-                stored_adj = active_exps[applied_exp_id].content.get("recommended_adjustments")
-                if isinstance(stored_adj, dict):
-                    card["recommended_adjustments"] = dict(stored_adj)
+            card = dict(matched_active_card)
+            applied_exp_id = str(card.get("experience_id") or "")
             card["event_time"] = session_ts
             card["source_session_id"] = session_id
             nodes = self.ingest_experience_cards(ns.tenant_id, ns.user_id, [card])
@@ -1384,7 +1365,8 @@ class MemorySystem:
             emb = None
             if self.embedding_provider is not None:
                 try:
-                    emb = self.embedding_provider.embed_one(build_search_text(node))
+                    phrase_txt = build_pure_phrase_text(node) or build_search_text(node)
+                    emb = self.embedding_provider.embed_one(phrase_txt)
                 except Exception:
                     emb = None
             self.index.upsert(ns, node, embedding=emb)

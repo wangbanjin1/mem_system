@@ -66,6 +66,12 @@ class EmbeddingProvider:
         if not texts:
             return []
         clean_texts = [t if (t and t.strip()) else "_" for t in texts]
+        max_batch_size = 10
+        if len(clean_texts) > max_batch_size:
+            all_vecs: List[List[float]] = []
+            for start_idx in range(0, len(clean_texts), max_batch_size):
+                all_vecs.extend(self.embed(clean_texts[start_idx : start_idx + max_batch_size]))
+            return all_vecs
         url = f"{self.base_url}/embeddings"
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -126,24 +132,37 @@ class MockEmbeddingProvider(EmbeddingProvider):
         self.timeout_read = 1.0
         self.max_retries = 1
 
+    def _compute_mock_vec(self, text: str) -> List[float]:
+        vec = [0.0] * self.dimension
+        s = (text or "_").lower()
+        # Character unigrams + bigrams so semantically overlapping strings have high cosine similarity
+        grams = [s[i] for i in range(len(s))] + [s[i : i + 2] for i in range(max(0, len(s) - 1))]
+        if not grams:
+            grams = ["_"]
+        for g in grams:
+            h = int(hashlib.md5(g.encode("utf-8")).hexdigest()[:8], 16)
+            idx = h % self.dimension
+            sign = 1.0 if ((h >> 8) & 1) == 0 else -1.0
+            vec[idx] += sign
+        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+        return [v / norm for v in vec]
+
+    def embed_one(self, text: str) -> List[float]:
+        return self._compute_mock_vec(text)
+
     def embed(self, texts: Sequence[str]) -> List[List[float]]:
         if not texts:
             return []
+        use_custom_embed_one = (
+            type(self).embed_one is not MockEmbeddingProvider.embed_one
+            and not hasattr(self, "call_count")
+        )
         results: List[List[float]] = []
         for text in texts:
-            vec = [0.0] * self.dimension
-            s = (text or "_").lower()
-            # Character unigrams + bigrams so semantically overlapping strings have high cosine similarity
-            grams = [s[i] for i in range(len(s))] + [s[i : i + 2] for i in range(max(0, len(s) - 1))]
-            if not grams:
-                grams = ["_"]
-            for g in grams:
-                h = int(hashlib.md5(g.encode("utf-8")).hexdigest()[:8], 16)
-                idx = h % self.dimension
-                sign = 1.0 if ((h >> 8) & 1) == 0 else -1.0
-                vec[idx] += sign
-            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-            results.append([v / norm for v in vec])
+            if use_custom_embed_one:
+                results.append(self.embed_one(text))
+            else:
+                results.append(self._compute_mock_vec(text))
         if len(results) != len(texts):
             raise ValueError(f"Embedding count mismatch: expected {len(texts)}, got {len(results)}")
         return results

@@ -45,60 +45,84 @@ _NOISY_CONTENT_KEYS = {
 }
 
 
-def build_search_text(node: MemoryNode) -> str:
-    """Build high-purity semantic text for embedding & FTS from node fields and content (stripping JSON key noise)."""
+def build_pure_phrase_text(node: MemoryNode) -> str:
+    """Extract pure 4~12 character right-hand semantic trigger phrase (phrase_text) for high-discriminability embedding."""
     c = node.content or {}
     st = node.subtype
 
-    # For anchor subtypes (expression / scene_preference / periodic_preference / service_to_app),
-    # foreground natural-language anchor phrases so embedding vectors have maximum semantic purity.
+    if st == "expression":
+        return str(c.get("phrase_text") or c.get("alias") or c.get("source_expression") or node.memory_key or "").strip()
+    if st in ("scene_preference", "environment"):
+        return str(c.get("phrase_text") or c.get("scene") or c.get("environment") or "").strip()
+    if st == "periodic_preference":
+        return str(c.get("phrase_text") or c.get("window_label") or c.get("time_window") or c.get("condition") or "").strip()
+    if st == "service_to_app":
+        return str(c.get("phrase_text") or c.get("service_cn") or c.get("business") or "").strip()
+    if st in ("preferred_value", "application_business", "experience_parameter"):
+        if c.get("phrase_text"):
+            return str(c["phrase_text"]).strip()
+        app_cn = str(c.get("app_cn") or c.get("application") or "").strip()
+        svc_cn = str(c.get("service_cn") or c.get("business") or "").strip()
+        return f"{app_cn}{svc_cn}".strip()
+    if st == "working_record":
+        if c.get("phrase_text"):
+            return str(c["phrase_text"]).strip()
+        loc = str(c.get("location") or c.get("scene") or "").strip()
+        svc = str(c.get("service_name") or c.get("business") or "").strip()
+        return f"{loc} {svc}".strip() if loc else svc
+    if st == "experience":
+        if c.get("phrase_text"):
+            return str(c["phrase_text"]).strip()
+        trig = c.get("trigger_conditions")
+        if isinstance(trig, dict):
+            kws: List[str] = []
+            for tk in ("keywords", "task_keywords", "location_keywords"):
+                sub = trig.get(tk)
+                if isinstance(sub, list):
+                    for item in sub:
+                        s_item = str(item).strip()
+                        if s_item and s_item not in kws:
+                            kws.append(s_item)
+            if kws:
+                return " ".join(kws[:4])
+        return str(c.get("title") or c.get("condition") or node.description or "").strip()
+    return str(c.get("phrase_text") or node.description or node.memory_key or "").strip()
+
+
+def build_search_text(node: MemoryNode) -> str:
+    """Build semantic text for FTS5 from node fields and content (zero hardcoded synonym lists)."""
+    c = node.content or {}
+    st = node.subtype
+    pure_phrase = build_pure_phrase_text(node)
+
     semantic_values: List[str] = []
+    if pure_phrase:
+        semantic_values.append(pure_phrase)
+
     if st == "expression":
         alias = str(c.get("alias") or c.get("source_expression") or node.memory_key or "").strip()
         target = str(c.get("target") or "").strip()
         note = str(c.get("note") or "").strip()
-        # Repeat primary anchor phrase to weight it strongly in the embedding
-        if alias:
-            semantic_values.extend([alias, alias])
-            if "午间" in alias:
-                semantic_values.append("中午 午饭 午休 固定例行档期")
-            if "画质" in alias or "清晰" in alias:
-                semantic_values.append("分辨率 画面清晰度 画质档位")
-            if "推流" in alias or "时延" in alias or "流畅" in alias:
-                semantic_values.append("低时延 不卡顿 顺畅推流")
-        if target:
-            semantic_values.append(target)
-        if note:
-            semantic_values.append(note)
+        for v in (alias, target, note):
+            if v and v not in semantic_values:
+                semantic_values.append(v)
     elif st in ("scene_preference", "environment"):
         sc = str(c.get("scene") or c.get("environment") or "").strip()
         app = str(c.get("application") or "").strip()
         biz = str(c.get("business") or "").strip()
-        if sc:
-            semantic_values.extend([sc, sc])
-            if "大巴" in sc or "转场" in sc:
-                semantic_values.append("坐大巴车 通勤班车 转场路上 乘车移动途中")
-            if "总结会" in sc or "会议" in sc:
-                semantic_values.append("阶段总结大会 复盘总结会 会议现场")
-            if "驻地" in sc or "外勤" in sc:
-                semantic_values.append("外勤驻地酒店 驻地休息区")
-        for k in ("resolution", "max_delay", "bit_rate", "priority", "note"):
+        for v in (sc, app, biz):
+            if v and v not in semantic_values:
+                semantic_values.append(v)
+        for k in ("resolution", "max_delay", "latency", "bit_rate", "priority", "note"):
             if c.get(k):
                 semantic_values.append(str(c[k]))
-        if app:
-            semantic_values.append(app)
-        if biz:
-            semantic_values.append(biz)
     elif st == "working_record":
         loc = str(c.get("location") or c.get("scene") or "").strip()
         app_n = str(c.get("application_name") or c.get("application") or "").strip()
         svc_n = str(c.get("service_name") or c.get("business") or "").strip()
-        if loc:
-            semantic_values.extend([loc, loc])
-        if app_n:
-            semantic_values.append(app_n)
-        if svc_n:
-            semantic_values.append(svc_n)
+        for v in (loc, app_n, svc_n):
+            if v and v not in semantic_values:
+                semantic_values.append(v)
         for k in ("start_timestamp", "end_timestamp", "duration", "resolution", "rtt_max", "latency", "summary", "note"):
             if c.get(k):
                 semantic_values.append(str(c[k]))
@@ -108,7 +132,7 @@ def build_search_text(node: MemoryNode) -> str:
                 if av:
                     semantic_values.append(str(av))
     elif st == "experience":
-        for k in ("title", "condition", "action", "description", "content", "strategy_type", "domain"):
+        for k in ("title", "condition", "action", "description", "content", "strategy_type", "domain", "rule_type", "causal_rationale"):
             if c.get(k):
                 semantic_values.append(str(c[k]))
         trig = c.get("trigger_conditions")
@@ -287,6 +311,7 @@ class MemoryIndex:
                     time_window_col TEXT NOT NULL DEFAULT '',
                     alias_col TEXT NOT NULL DEFAULT '',
                     target_col TEXT NOT NULL DEFAULT '',
+                    phrase_text TEXT NOT NULL DEFAULT '',
                     description TEXT NOT NULL DEFAULT '',
                     search_text TEXT NOT NULL DEFAULT '',
                     embedding_json TEXT NOT NULL DEFAULT '[]'
@@ -305,6 +330,7 @@ class MemoryIndex:
                 ("time_window_col", "TEXT NOT NULL DEFAULT ''"),
                 ("alias_col", "TEXT NOT NULL DEFAULT ''"),
                 ("target_col", "TEXT NOT NULL DEFAULT ''"),
+                ("phrase_text", "TEXT NOT NULL DEFAULT ''"),
             ]:
                 if col_name not in cols:
                     cur.execute(f"ALTER TABLE vector ADD COLUMN {col_name} {col_def}")
@@ -337,6 +363,7 @@ class MemoryIndex:
 
     def upsert(self, ns: Namespace, node: MemoryNode, embedding: Optional[Sequence[float]] = None) -> None:
         raw_search = build_search_text(node)
+        pure_phrase = build_pure_phrase_text(node)
         tokenized_desc = tokenize_for_fts(node.description)
         tokenized_search = tokenize_for_fts(raw_search)
         emb_json = json.dumps(list(embedding) if embedding is not None else [])
@@ -399,6 +426,7 @@ class MemoryIndex:
                         time_window_col = ?,
                         alias_col = ?,
                         target_col = ?,
+                        phrase_text = ?,
                         description = ?,
                         search_text = ?,
                         embedding_json = ?
@@ -424,6 +452,7 @@ class MemoryIndex:
                         time_window_col,
                         alias_col,
                         target_col,
+                        pure_phrase,
                         tokenized_desc,
                         tokenized_search,
                         emb_json,
@@ -438,8 +467,8 @@ class MemoryIndex:
                         memory_id, owner_type, user_id, agent_id, memory_type, subtype,
                         memory_key, status, validity, confidence, heat, last_heat_at,
                         last_reinforced_at, updated_at, app_col, biz_col, scene_col,
-                        time_window_col, alias_col, target_col, description, search_text, embedding_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        time_window_col, alias_col, target_col, phrase_text, description, search_text, embedding_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         node.memory_id,
@@ -462,6 +491,7 @@ class MemoryIndex:
                         time_window_col,
                         alias_col,
                         target_col,
+                        pure_phrase,
                         tokenized_desc,
                         tokenized_search,
                         emb_json,
@@ -571,6 +601,47 @@ class MemoryIndex:
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
+    def search_vector_multi_windows(
+        self,
+        ns: Namespace,
+        window_embeddings: Sequence[Sequence[float]],
+        subtypes: Optional[Sequence[str]] = None,
+        memory_types: Optional[Sequence[str]] = None,
+        statuses: Optional[Sequence[str]] = None,
+        top_k: int = 20,
+    ) -> List[Tuple[str, float]]:
+        """Compute cross-window Max-Pooling cosine similarity against stored pure phrase embeddings."""
+        valid_embs = [w for w in window_embeddings if w]
+        if not valid_embs:
+            return []
+        where_sql, params = self._scope_where_clause(
+            ns, subtypes=subtypes, memory_types=memory_types, statuses=statuses, table_alias=""
+        )
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                f"SELECT memory_id, embedding_json FROM vector WHERE {where_sql}",
+                params,
+            )
+            rows = cur.fetchall()
+
+        scored: List[Tuple[str, float]] = []
+        base_emb = valid_embs[0]
+        sub_embs = valid_embs[1:]
+        for r in rows:
+            try:
+                emb = json.loads(r["embedding_json"] or "[]")
+            except Exception:
+                emb = []
+            if emb:
+                base_sim = max(0.0, _cosine_similarity(base_emb, emb))
+                win_max = max((_cosine_similarity(w_emb, emb) for w_emb in sub_embs), default=0.0)
+                eff_sim = max(base_sim, win_max) if win_max >= 0.48 else base_sim
+                if eff_sim > 0.0:
+                    scored.append((r["memory_id"], eff_sim))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
     def search_fts(
         self,
         ns: Namespace,
@@ -649,7 +720,7 @@ class MemoryIndex:
             cur.execute(
                 f"""
                 SELECT memory_id, memory_type, subtype, memory_key, status,
-                       app_col, biz_col, scene_col, time_window_col, alias_col, target_col, embedding_json
+                       app_col, biz_col, scene_col, time_window_col, alias_col, target_col, phrase_text, embedding_json
                 FROM vector
                 WHERE {where_sql}
                 """,

@@ -90,27 +90,30 @@ _CLAUSE_SPLIT_RE = re.compile(
 _SLOT_NEGATION_RE = re.compile(
     r"(?:不用|别用|不按|别按|不再用|不要用|不开|别开|不看|别看|不玩|别玩|不打|别打|不刷|别刷|取消|放弃|停止|不是用|也没用|没用)"
 )
-_PARAPHRASE_SYNONYMS: List[Tuple[str, str]] = [
-    ("大巴车", "大巴"),
-    ("通勤大巴", "大巴"),
-    ("转场班车", "大巴转场"),
-    ("班车", "大巴"),
-    ("路上", "途中"),
-    ("车上", "途中"),
-    ("半路", "途中"),
-    ("中午", "午间"),
-    ("正午", "午间"),
-    ("早上", "早间"),
-    ("清晨", "早间"),
-    ("晚上", "晚间"),
-    ("夜间", "晚间"),
-    ("总结大会", "阶段工作总结会"),
-    ("阶段总结会", "阶段工作总结会"),
-    ("复盘总结会", "阶段工作总结会"),
-    ("驻地酒店", "外勤驻地"),
-    ("外勤酒店", "外勤驻地"),
-]
 _CJK_CHARS_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _build_sliding_windows(clauses: Sequence[str], win_size: int = 8, step: int = 4) -> List[str]:
+    """Slice positive clauses into overlapping 6~10 character sliding windows (default win_size=8, step=4)
+    so short stored phrase_text vectors (4~10 chars) achieve high cosine similarity against long multi-clause queries."""
+    windows: List[str] = []
+    for raw_c in clauses:
+        c = re.sub(r"\s+", "", str(raw_c or "")).strip()
+        if not c:
+            continue
+        if c not in windows:
+            windows.append(c)
+        for ws in (win_size, 10) if win_size != 10 else (win_size,):
+            if len(c) <= ws:
+                continue
+            for i in range(0, len(c) - ws + 1, step):
+                w = c[i : i + ws]
+                if w and w not in windows:
+                    windows.append(w)
+            tail = c[-ws:]
+            if tail and tail not in windows:
+                windows.append(tail)
+    return windows
 
 
 def _parse_relative_date_window(query: str, now_ts: Optional[str]) -> Optional[Tuple[str, str]]:
@@ -146,20 +149,11 @@ def _parse_relative_date_window(query: str, now_ts: Optional[str]) -> Optional[T
     return None
 
 
-def _normalize_paraphrase_text(text: str) -> str:
-    """Normalize common colloquial temporal/scene synonyms into canonical form."""
-    out = text
-    for src, dst in _PARAPHRASE_SYNONYMS:
-        if src in out and dst not in out:
-            out = out.replace(src, dst)
-    return out
-
-
 def _fuzzy_phrase_match(phrase: str, text: str) -> bool:
-    """Match an alias or scene phrase against query text via:
+    """Match an alias or scene phrase against query text without any hardcoded synonym dictionary:
     1. Exact substring match
-    2. Synonym-normalized substring match (e.g. '中午' -> '午间', '大巴车...路上' -> '大巴...途中')
-    3. Split-token proximity match (e.g. '午间那个例行档期' -> '午间例行', '画质保个基本档位' -> '保个基本画质')
+    2. Split-bigram proximity match (e.g. '画质保个基本档位' -> '保个基本画质', '坐大巴车转场的路上' -> '大巴转场途中')
+    3. Core bigram + character subsequence proximity match (e.g. '中午那个例行档期' -> '午间例行', '阶段总结大会' -> '阶段工作总结会')
     """
     p = (phrase or "").strip()
     t = (text or "").strip()
@@ -168,16 +162,11 @@ def _fuzzy_phrase_match(phrase: str, text: str) -> bool:
     if p in t:
         return True
 
-    norm_p = _normalize_paraphrase_text(p)
-    norm_t = _normalize_paraphrase_text(t)
-    if norm_p in norm_t:
-        return True
-
-    cjk_p = "".join(_CJK_CHARS_RE.findall(norm_p))
+    cjk_p = "".join(_CJK_CHARS_RE.findall(p))
     if len(cjk_p) < 4:
         return False
 
-    # Build 2-character core CJK chunks
+    # Build 2-character CJK bigrams across the phrase
     chunks: List[str] = []
     for i in range(0, len(cjk_p) - 1, 2):
         ck = cjk_p[i : i + 2]
@@ -187,23 +176,41 @@ def _fuzzy_phrase_match(phrase: str, text: str) -> bool:
     if tail_ck not in chunks:
         chunks.append(tail_ck)
 
-    if len(chunks) < 2:
-        return False
-
+    max_span = max(14, len(cjk_p) * 3)
     matched_positions: List[int] = []
     for ck in chunks:
-        pos = norm_t.find(ck)
+        pos = t.find(ck)
         if pos >= 0:
             matched_positions.append(pos)
 
-    if len(matched_positions) < 2:
-        return False
-    required = len(chunks) if len(chunks) == 2 else max(2, math.ceil(len(chunks) * 0.66))
-    if len(matched_positions) < required:
+    if len(matched_positions) >= 2:
+        required = len(chunks) if len(chunks) == 2 else max(2, math.ceil(len(chunks) * 0.66))
+        if len(matched_positions) >= required:
+            if max(matched_positions) - min(matched_positions) <= max_span:
+                return True
+
+    # Character + contiguous bigram proximity check for 4+ char phrases where one bigram is intact
+    # and >= 66% of characters appear within a tight window in `t`.
+    all_bigrams = [cjk_p[i : i + 2] for i in range(len(cjk_p) - 1)]
+    has_contiguous_bigram = any(bg in t for bg in all_bigrams)
+    if not has_contiguous_bigram:
         return False
 
-    span = max(matched_positions) - min(matched_positions)
-    return span <= max(14, len(cjk_p) * 3)
+    char_positions: List[int] = []
+    search_start = 0
+    for ch in cjk_p:
+        pos = t.find(ch, search_start)
+        if pos < 0:
+            pos = t.find(ch)
+        if pos >= 0:
+            char_positions.append(pos)
+            search_start = pos + 1
+
+    min_chars = max(3, math.ceil(len(cjk_p) * 0.66))
+    if len(char_positions) >= min_chars:
+        if max(char_positions) - min(char_positions) <= max_span:
+            return True
+    return False
 
 
 def _split_positive_and_negated_clauses(query: str) -> Tuple[List[str], List[str]]:
@@ -561,20 +568,15 @@ class SearchEngine:
                     time_windows.append(pt)
 
         # --- Slot Mining: Scenes (from existing scene_preference / environment rows) ---
-        norm_combined_pos = _normalize_paraphrase_text(combined_pos_text)
-        norm_neg = _normalize_paraphrase_text(neg_text)
         for row in slot_rows:
             sc = str(row.get("scene_col") or "").strip()
             if not sc:
                 continue
-            if neg_text and _fuzzy_phrase_match(sc, norm_neg) and not _fuzzy_phrase_match(sc, norm_combined_pos):
+            if neg_text and _fuzzy_phrase_match(sc, neg_text) and not _fuzzy_phrase_match(sc, combined_pos_text):
                 if sc not in negated_scenes:
                     negated_scenes.append(sc)
                 continue
-            matched_sc = _fuzzy_phrase_match(sc, norm_combined_pos) or any(
-                tok in sc and tok in norm_combined_pos
-                for tok in ("大巴", "转场", "驻地", "外勤", "午休", "总结会")
-            )
+            matched_sc = _fuzzy_phrase_match(sc, combined_pos_text)
             if matched_sc and sc not in scenes:
                 scenes.append(sc)
                 if row.get("subtype") == "scene_preference":
@@ -664,6 +666,7 @@ class SearchEngine:
         apps = self._expand_apps(apps)
         negated_apps = self._expand_apps(negated_apps)
         rel_date_range = _parse_relative_date_window(combined_pos_text, now_ts)
+        sliding_windows = _build_sliding_windows(pos_clauses or ([q_raw] if q_raw else []), win_size=8, step=4)
 
         # Remove any positive slots that were only in negated lists if not explicitly requested in positive clauses
         return {
@@ -682,6 +685,8 @@ class SearchEngine:
             "negated_time_windows": negated_time_windows,
             "pointer_hops": pointer_hops,
             "vector_anchor_hits": [],
+            "positive_clauses": pos_clauses,
+            "sliding_windows": sliding_windows,
             "expanded_query": combined_pos_text if combined_pos_text else q_raw,
             "alias_hit_ids": alias_hit_ids,
         }
@@ -692,15 +697,21 @@ class SearchEngine:
         slot_plan: Dict[str, Any],
         vector_sim_map: Dict[str, float],
         q_emb: Sequence[float],
+        window_embeddings: Optional[Sequence[Sequence[float]]] = None,
     ) -> bool:
-        """Vector-Anchor-to-SQL-SELECT Bridge:
-        When `q_emb` hits an `expression`, `scene_preference`, or business prototype vector with high cosine similarity,
-        read the structured columns (`app_col`, `biz_col`, `scene_col`, `target_col`) from that SQLite row,
-        run Hop 2 pointer resolution (`periodic_preference` / `service_to_app`), and return True if new slots unlocked.
+        """Vector Similarity Retrieval & Row-Level Slot Projection -> Stage-2 Relational Completion -> SQL SELECT:
+        When sliding-window query embeddings hit an `expression`, `scene_preference`, or business prototype vector
+        with high cosine similarity, read the structured slot columns (`app_col`, `biz_col`, `scene_col`, `target_col`)
+        from that SQLite row, execute stage-2 relational table completion (`periodic_preference` / `service_to_app`),
+        and return True if new structured slots were extracted.
         """
         slot_rows = self._get_active_slot_rows(ns)
         if not slot_rows:
             return False
+
+        all_q_embs: List[Sequence[float]] = [w for w in (window_embeddings or []) if w]
+        if q_emb and not all_q_embs:
+            all_q_embs = [q_emb]
 
         apps: List[str] = slot_plan["applications"]
         bizs: List[str] = slot_plan["businesses"]
@@ -720,20 +731,20 @@ class SearchEngine:
 
         changed = False
 
-        # 1. Adsorb expression & scene_preference anchor rows from SQLite vector_sim_map
+        # 1. Extract slots from expression & scene_preference candidate rows via cross-window Max-Pooling similarity
         for row in slot_rows:
             mid = row.get("memory_id") or ""
             st = row.get("subtype") or ""
             v_sim = float(vector_sim_map.get(mid, 0.0))
-            if v_sim <= 0.0 and row.get("embedding_json"):
+            if v_sim <= 0.0 and row.get("embedding_json") and all_q_embs:
                 try:
                     r_emb = json.loads(row["embedding_json"])
                     if r_emb:
-                        v_sim = _cosine_similarity(q_emb, r_emb)
+                        v_sim = max((_cosine_similarity(w_e, r_emb) for w_e in all_q_embs), default=0.0)
                 except Exception:
                     v_sim = 0.0
 
-            if st == "expression" and v_sim >= 0.42:
+            if st == "expression" and v_sim >= 0.52:
                 alias = str(row.get("alias_col") or row.get("memory_key") or "").strip()
                 target = str(row.get("target_col") or "").strip()
                 if not alias or not target or alias in resolved_aliases or alias in negated_aliases:
@@ -747,6 +758,27 @@ class SearchEngine:
                     continue
                 if bound_app in negated_apps or bound_biz in negated_bizs:
                     continue
+                # If expression maps to a time_window, verify its periodic_preference does not conflict with explicit/negated apps
+                tw_matches = [m_tw.group(1) for m_tw in _QUERY_TIME_RE.finditer(target)]
+                if tw_matches and (explicit_apps or explicit_bizs or negated_apps or negated_bizs):
+                    tw_conflict = False
+                    for prow in slot_rows:
+                        if prow.get("subtype") != "periodic_preference":
+                            continue
+                        cond_tw = str(prow.get("time_window_col") or "").strip()
+                        if cond_tw and any(time_matches_window(tw_m, cond_tw) for tw_m in tw_matches):
+                            p_app = str(prow.get("app_col") or "").strip()
+                            p_biz = str(prow.get("biz_col") or "").strip()
+                            if (
+                                (explicit_apps and p_app and p_app not in explicit_apps)
+                                or (explicit_bizs and p_biz and p_biz not in explicit_bizs)
+                                or (p_app in negated_apps)
+                                or (p_biz in negated_bizs)
+                            ):
+                                tw_conflict = True
+                                break
+                    if tw_conflict:
+                        continue
 
                 resolved_aliases[alias] = target
                 scope_str = f" (作用域: {bound_app}|{bound_biz})" if bound_app or bound_biz else ""
@@ -810,15 +842,15 @@ class SearchEngine:
                     }
                 )
 
-        # 2. Business Prototype Vector Bank adsorption (if business is still unresolved)
-        if not bizs and q_emb:
+        # 2. Business Prototype Vector Bank matching (if business is still unresolved)
+        if not bizs and all_q_embs:
             proto_vecs = self._get_biz_prototype_vecs()
             best_biz = ""
             best_sim = 0.0
             for b_code, p_vec in proto_vecs.items():
                 if b_code in negated_bizs:
                     continue
-                b_sim = _cosine_similarity(q_emb, p_vec)
+                b_sim = max((_cosine_similarity(w_e, p_vec) for w_e in all_q_embs), default=0.0)
                 if b_sim > best_sim:
                     best_sim = b_sim
                     best_biz = b_code
@@ -979,13 +1011,18 @@ class SearchEngine:
         # a complete parameter card (select_sim >= 0.93), skip remote Embedding API call.
         vector_short_circuited = bool(cascade_short_circuit and max_select_sim >= 0.93)
 
-        # 1. Dense vector recall (scoped by ns, using expanded_query) + Vector Anchor Slot Adsorption
+        # 1. Dense vector recall (scoped by ns, using 6~10 char sliding windows + Max-Pooling)
         if not vector_short_circuited and self.embedding_provider is not None and expanded_query.strip():
             try:
                 q_emb = self.embedding_provider.embed_one(expanded_query)
-                for mid, v_sim in self.index.search_vector(
+                sliding_windows = list(slot_plan.get("sliding_windows") or [])
+                extra_windows = [w for w in sliding_windows if w and w != expanded_query]
+                extra_embs = self.embedding_provider.embed(extra_windows) if extra_windows else []
+                window_embs: List[Sequence[float]] = [q_emb] + list(extra_embs)
+
+                for mid, v_sim in self.index.search_vector_multi_windows(
                     ns,
-                    q_emb,
+                    window_embs,
                     subtypes=resolved_subtypes,
                     memory_types=resolved_mtypes,
                     statuses=statuses,
@@ -994,8 +1031,8 @@ class SearchEngine:
                     sim_map[mid] = max(sim_map.get(mid, 0.0), float(v_sim))
                     vector_sim_map[mid] = max(vector_sim_map.get(mid, 0.0), float(v_sim))
 
-                # 1.5 Vector-Anchor Adsorption -> Read Row Slot Columns -> Hop 2 -> SQL SELECT Bridge
-                if self._adsorb_slots_from_vector_hits(ns, slot_plan, vector_sim_map, q_emb):
+                # 1.5 Vector Similarity Retrieval & Row-Level Slot Projection -> Stage-2 Completion -> SQL SELECT
+                if self._adsorb_slots_from_vector_hits(ns, slot_plan, vector_sim_map, q_emb, window_embeddings=window_embs):
                     for alias_mid, alias_reason in (slot_plan.get("alias_hit_ids") or {}).items():
                         sim_map[alias_mid] = max(sim_map.get(alias_mid, 0.0), 0.88)
                         select_sim_map[alias_mid] = max(select_sim_map.get(alias_mid, 0.0), 0.88)
