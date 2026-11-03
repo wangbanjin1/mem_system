@@ -1,0 +1,7 @@
+Portions of this project were developed using the Literature Search (OpenAlex)
+skill, copyright Google LLC, licensed under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+This tool retrieves metadata from OpenAlex (https://openalex.org), which is
+released under the CC0 1.0 Universal Public Domain Dedication
+(https://creativecommons.org/publicdomain/zero/1.0/).

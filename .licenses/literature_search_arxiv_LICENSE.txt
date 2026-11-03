@@ -1,0 +1,9 @@
+Portions of this project were developed using the Literature Search (arXiv)
+skill, copyright Google LLC, licensed under the Apache License 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+This tool retrieves metadata and content from arXiv.org. Users must comply
+with arXiv's Terms of Use (https://info.arxiv.org/help/policies/terms_of_use.html)
+and API Terms of Use (https://info.arxiv.org/help/api/tou.html). Individual
+e-prints are subject to their respective authors' licenses (such as Creative
+Commons or the arXiv non-exclusive license).
