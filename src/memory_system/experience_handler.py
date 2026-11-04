@@ -57,10 +57,13 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "strategy": "前置预热加固",
         },
         "crystallize_trigger": {
-            "later_turns": [["提前进场调试", "掐着点开来不及", "提前进场", "来不及调试"], ["提前半小时", "提前30分钟"]],
+            "later_turns": [
+                ["提前进场调试", "掐着点开来不及", "提前进场", "来不及调试", "现场调试", "手忙脚乱", "提前预热"],
+                ["提前半小时", "提前30分钟"],
+            ],
         },
         "apply_trigger": {
-            "first_turn": [["奥体中心", "会展中心", "重大活动", "大型活动", "赛事", "峰会", "开幕式"]],
+            "first_turn": [["奥体中心", "奥林匹克", "体育中心", "会展中心", "博览中心", "重大活动", "大型活动", "大型场馆", "赛事", "峰会", "开幕式"]],
             "later_turns": [["预热", "提前半小时", "提前30分钟"]],
         },
         "bridge_trigger": {"first_turn": [["重大活动保障", "重要现场保障"]]},
@@ -109,8 +112,9 @@ _BUILTIN_EXPERIENCE_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "crystallize_trigger": {
             "later_turns": [["放国庆假", "那天不开会", "放假", "假期"], ["顺延", "节后", "挪到", "改到"]],
         },
-        "apply_trigger": {"first_turn": [["@HOLIDAY_DATE", "国庆", "法定假", "节假日"], ["例行周会", "例会", "周会"]]},
-        "bridge_trigger": {"first_turn": [["@HOLIDAY_DATE"], ["国庆", "法定假", "节假日", "放假", "假期", "例行周会", "例会", "周会"]]},
+        "apply_trigger": {"first_turn": [["@HOLIDAY_DATE", "国庆", "法定假", "节假日"], ["例行周会", "例会", "周会", "沟通会", "会议", "视频通话", "直播"]]},
+        "bridge_trigger": {"first_turn": [["@HOLIDAY_DATE"]]},
+        "bridge_requires_active": True,
         "learning_keeps_current_state": True,
     },
     "EXP_ORDER_QUALITY_DISAMBIGUATION_01": {

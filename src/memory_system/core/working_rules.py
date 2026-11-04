@@ -8,10 +8,11 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-# "把昨天预约的抖音开直播保障往后推迟一个小时" / "前天约的那个会议保障提前1小时"
+# "把昨天预约的抖音开直播保障往后推迟一个小时" / "之前我在…约的那场…得往后挪一挪" / "我在…订的…想提前一点"
 _RESCHEDULE_RE = re.compile(
-    r"(?:昨天|前天|大前天|上周[一二三四五六日天]?|前几天|上次|之前|刚才|早上|上午)(?:预约|预订|约|订|办|开|定)(?:好)?的.{0,30}?"
-    r"(?:往后推迟|推迟|延后|往后挪|往后推|顺延|提前|往前挪|往前提)"
+    r"(?:(?:昨天|前天|大前天|上周[一二三四五六日天]?|前几天|上次|之前|刚才|早上|上午).{0,24}?(?:预约|预订|约|订|办|开|定)(?:好|过)?(?:的|那场|那笔|那单)"
+    r"|(?:在.{1,20}?)?(?:预约|预订|约|订)(?:好|过)?(?:的|那场|那笔|那单))"
+    r".{0,30}?(?:往后推迟|推迟|延后|往后挪|往后推|顺延|提前|往前挪|往前提|改期|调整.{0,4}?时间|调一下时间)"
 )
 _SHIFT_RE = re.compile(
     r"(往后推迟|推迟|延后|往后挪|往后推|顺延|提前|往前挪|往前提)\s*"
@@ -24,7 +25,9 @@ _ORDER_REF_RE = re.compile(
     r"(?:上周|上个月初?|上个月|上回|上次|之前|以前|前几天|前阵子|那次)"
     r".{0,24}?(?:意图保障单|保障单|工单)(?:的)?(?:规格|那套|配置|参数|标准)?"
 )
-_ORDER_REF_RE_2 = re.compile(r"(?:按|照|调)(?:之前|上次|上周|上个月|以前)(?:的)?.{0,12}?(?:规格|那套|配置)")
+_ORDER_REF_RE_2 = re.compile(
+    r"(?:按|照|调|复用)(?:之前|上次|上周|上个月|以前)(?!平时|日常)(?:的|那笔|那单|那场)?.{0,14}?(?:规格|那套|配置|参数|单子)"
+)
 _TIME_RE = re.compile(r"\d{1,2}\s*[时点:：]|[一二三四五六七八九十两]{1,3}点")
 
 
@@ -44,7 +47,8 @@ def classify_working_record_reference(first_turn_text: str, has_time: Optional[b
     text = first_turn_text or ""
     if _RESCHEDULE_RE.search(text):
         return "reschedule"
-    if _ORDER_REF_RE.search(text) or _ORDER_REF_RE_2.search(text):
+    has_order_kw = bool(_ORDER_REF_RE.search(text)) or any(k in text for k in ("工单", "保障单", "那笔", "那单", "单子"))
+    if has_order_kw or (_ORDER_REF_RE_2.search(text) and not any(w in text for w in ("平时", "日常", "习惯", "老规矩"))):
         if has_time is None:
             has_time = has_explicit_time(text)
         return "disambig" if has_time else "reuse"
