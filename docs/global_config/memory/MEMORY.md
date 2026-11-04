@@ -1,0 +1,4 @@
+- [Zero Hardcoding & Generator-First Policy](feedback_zero_hardcoding.md) — Forbid literal slot/keyword hardcoding; fix generator/engine source code first
+- [Logging System, Function Granularity & Prompt Decoupling](feedback_logging_and_code_modularity.md) — Forbid print() in favor of logger.info/logging; keep functions <100 lines and decouple prompt constants into prompts/ modules
+- [HTML Report & Visual Standards](feedback_html_artifact_style.md) — Modular sub-HTML split, objective academic tone & 4-col citation table, native Unicode/HTML over inline LaTeX, dual light theme, and Lavish workflow
+- [Repos & DashScope Infrastructure](reference_repos_and_infra.md) — GitHub org wangbanjin1 repositories, local paths, Python 3.12 env, and DashScope models
