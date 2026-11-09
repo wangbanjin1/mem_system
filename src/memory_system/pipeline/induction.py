@@ -115,7 +115,7 @@ class InductionEngine:
         biz_latest_ts: Dict[str, str] = {}
 
         for ab in major_nodes:
-            if ab.validity.type == "temporary":
+            if ab.validity.type == "temporary" or ab.content.get("declaration_mode") == "preseed_profile":
                 continue
             if ab.status not in (MemoryStatus.ACTIVE.value, MemoryStatus.REINFORCED.value):
                 continue

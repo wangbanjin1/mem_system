@@ -144,6 +144,7 @@ def process_working_memory_turn(
         n
         for n in filestore.iter_nodes(ns, memory_type="working_memory", subtype="working_record")
         if n.status not in (MemoryStatus.ARCHIVED.value, MemoryStatus.EXPIRED.value)
+        and not n.content.get("is_preseed_record")
     ]
     if wr_nodes:
         wr_nodes.sort(key=lambda x: str(x.content.get("record_id") or x.created_at or ""))
